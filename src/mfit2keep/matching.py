@@ -27,7 +27,9 @@ def item_key(text: str) -> str:
     """Parte estável da linha: o nome do exercício, normalizado."""
     # O render escreve "↳ 2. Nome": a seta vem antes do número, então ela sai primeiro.
     stripped = _NUMBER_PREFIX.sub("", _CONTINUATION.sub("", text)).strip()
-    name = stripped.split(_DETAIL_SEPARATOR, 1)[0]
+    # Corte pelo ÚLTIMO separador: o nome do exercício pode conter " — "
+    # ("Supino — Pegada Fechada"), mas os detalhes nunca contêm (usam " · ").
+    name = stripped.rsplit(_DETAIL_SEPARATOR, 1)[0]
     return name.casefold().strip() or stripped.casefold()
 
 
