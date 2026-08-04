@@ -306,3 +306,15 @@ def test_the_anonymous_window_step_does_not_offer_a_normal_link() -> None:
     # Um link abriria aba normal — o contrário do que o passo manda fazer.
     assert 'href="https://accounts.google.com/EmbeddedSetup"' not in pagina
     assert "endereco-google" in pagina
+
+
+def test_the_tab_has_an_icon(painel: tuple[str, str]) -> None:
+    base, _ = painel
+
+    with urllib.request.urlopen(base + "/static/favicon.svg", timeout=10) as resposta:
+        assert resposta.status == 200
+        assert resposta.headers["Content-Type"] == "image/svg+xml"
+
+    pagina = (web.frontend_dir() / "index.html").read_text(encoding="utf-8")
+    # Sem o link, o navegador mostra o globo genérico na aba.
+    assert 'rel="icon"' in pagina
