@@ -10,7 +10,7 @@
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![mypy strict](https://img.shields.io/badge/mypy-strict-2A6DB2)](https://mypy-lang.org/)
 [![uv](https://img.shields.io/badge/deps-uv-DE5FE9?logo=uv&logoColor=white)](https://docs.astral.sh/uv/)
-[![Tests](https://img.shields.io/badge/tests-216%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen)](tests/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -48,50 +48,59 @@ checkbox por exercício já no formato certo para a tela do relógio.
 
 ```mermaid
 flowchart LR
-    subgraph fontes["fontes (WorkoutSource)"]
-        M["MFIT Personal<br/>(rede)"]
-        J["arquivo JSON<br/>formato neutro"]
+    subgraph fontes["fonte — WorkoutSource"]
+        M["MFIT Personal<br/><small>rede + conta</small>"]
+        J["arquivo JSON<br/><small>formato neutro</small>"]
     end
-    fontes --> W["Workout / Exercise"]
-    W --> R["render"]
+
+    fontes --> W["Workout · Exercise<br/><small>modelo de domínio</small>"]
     W -.->|exportar| J
+    W --> R["render<br/><small>a linha do relógio</small>"]
     R --> N["ChecklistNote"]
-    subgraph destinos["destinos (NoteDestination)"]
-        K["Google Keep<br/>checkbox nativo"]
+
+    subgraph destinos["destino — NoteDestination"]
+        K["Google Keep<br/><small>checkbox nativo</small>"]
         L["Markdown local"]
     end
+
     N --> destinos
     K -.->|app Wear OS| S["⌚ smartwatch"]
 ```
 
-**As duas pontas são plugáveis.** No meio fica `Workout`/`Exercise`, que não conhece nem o MFIT
-nem o Keep — trocar qualquer lado é implementar uma interface, sem tocar em render nem em
-matching. É o mesmo `Workout` que sai pelo `exportar`, então dá para largar o MFIT sem largar o app.
+**As duas pontas são plugáveis.** No meio fica `Workout`/`Exercise`, que não conhece nem o MFIT nem
+o Keep: trocar qualquer lado é implementar uma interface, sem tocar em render nem em matching. É o
+mesmo `Workout` que sai pelo `exportar`, então dá para largar o MFIT sem largar o app.
 
 ## Instalação
 
-Roda em **Linux, Windows e macOS** — o CI executa a suíte nos três. Precisa de **Python 3.14+**;
-o projeto usa conda para o interpretador e [uv](https://docs.astral.sh/uv/) para as dependências:
+Roda em **Linux, Windows e macOS** — o CI executa a suíte nos três a cada PR. Precisa de
+**Python 3.14+**.
 
 ```bash
 git clone https://github.com/Bruno-Mascarenhas/mfit2keep.git
 cd mfit2keep
 
+uv venv --python 3.14
+uv pip install -e ".[dev]"
+```
+
+<details>
+<summary>Com conda para o interpretador</summary>
+
+```bash
 conda create -y -n mfit2keep python=3.14
 uv pip install --python "$(conda run -n mfit2keep which python)" -e ".[dev]"
 conda activate mfit2keep
 ```
 
-<details>
-<summary>Só com <code>uv</code>, sem conda</summary>
+</details>
+
+A CLI fica disponível de duas formas — as duas funcionam de qualquer diretório:
 
 ```bash
-uv venv --python 3.14
-uv pip install -e ".[dev]"
-source .venv/bin/activate
+mfit2keep --help              # script instalado
+python -m mfit2keep --help    # sem depender do PATH (útil em cron/container)
 ```
-
-</details>
 
 ## Configuração
 
@@ -105,7 +114,10 @@ MFIT_EMAIL=voce@exemplo.com
 MFIT_PASSWORD=sua-senha
 ```
 
-O app faz login sozinho e guarda o JWT em `.state/`, renovando quando expira.
+O app faz login sozinho e guarda o JWT localmente, renovando quando expira. Rodando a partir do
+clone, `.env` e estado ficam ao lado do código; instalado como pacote, vão para o lugar que cada
+sistema considera correto (`~/.config` e `~/.local/state` no Linux, `%APPDATA%` e `%LOCALAPPDATA%`
+no Windows, `Application Support` no macOS).
 
 ### 2. Google Keep
 
@@ -122,6 +134,8 @@ O comando guia os passos:
 2. Faça login e clique em **Eu concordo**. A página fica girando para sempre — é esperado.
 3. `F12` → *Application* → *Cookies* → `https://accounts.google.com`.
 4. Copie o valor do cookie **`oauth_token`** (começa com `oauth2_4/`) e cole no prompt.
+
+Defina também `GOOGLE_EMAIL` no `.env` — é como o app sabe de qual conta é o token.
 
 > [!IMPORTANT]
 > O cookie é de **uso único** e expira em poucos minutos — cole logo depois de copiar.
@@ -148,12 +162,24 @@ mfit2keep sync 12345678 --destino local -o ./notas
 
 # Apagar só o que o app criou (--arquivar para arquivar em vez de apagar)
 mfit2keep limpar --destino keep
-mfit2keep limpar --destino keep --arquivar
 ```
 
 <div align="center">
   <img src="docs/sync.svg" alt="Saída do comando sync no terminal" width="720">
 </div>
+
+### Comandos
+
+| Comando | O que faz |
+| --- | --- |
+| `rotinas` | Lista as rotinas disponíveis na fonte |
+| `preview` | Mostra no terminal exatamente o que iria para as notas |
+| `sync` | Cria/atualiza as notas no destino |
+| `exportar` | Grava os treinos no formato neutro, independente de serviço |
+| `limpar` | Apaga ou arquiva **só** o que o app criou |
+| `keep-login` | Ritual único do master token do Google |
+| `segredos status` | Mostra onde cada segredo está guardado |
+| `segredos proteger` | Cifra os segredos do `.env` com a cifragem nativa do sistema |
 
 ### Ajustes de formatação
 
@@ -178,18 +204,17 @@ Rodar `sync` outra vez **não duplica** as notas: o app guarda o vínculo entre 
 Se o treino não mudou, a nota nem é tocada. Se mudou, os exercícios que continuam na ficha
 **mantêm o checkbox marcado** — dá para sincronizar no meio do treino sem perder o progresso.
 
+O casamento é pelo **nome do exercício**, não pela linha inteira: renumerar a ficha ou mudar a
+carga prescrita não zera o que você já marcou.
+
 ## Sair do MFIT: o formato neutro
 
 O `mfit2keep` não te prende ao MFIT. `exportar` grava os treinos num JSON que não pertence a
 serviço nenhum, e esse JSON volta a ser uma fonte válida:
 
-```bash
-# MFIT -> arquivo (uma vez)
-mfit2keep exportar 12345678 -o treinos.json
-
-# arquivo -> Keep (sem conta, sem rede, sem MFIT)
-mfit2keep sync --fonte arquivo --arquivo treinos.json --destino keep
-```
+<div align="center">
+  <img src="docs/export.svg" alt="Exportar do MFIT e sincronizar a partir do arquivo" width="720">
+</div>
 
 ```json
 {
@@ -207,8 +232,8 @@ mfit2keep sync --fonte arquivo --arquivo treinos.json --destino keep
 ```
 
 Qualquer ferramenta que produza esse JSON já funciona como fonte — planilha, script, outro app.
-Nenhum campo é obrigatório além de `name`, e o `version` faz um arquivo de versão futura falhar
-com mensagem clara em vez de ser lido errado em silêncio.
+Só `name` é obrigatório, e o `version` faz um arquivo de versão futura falhar com mensagem clara
+em vez de ser lido errado em silêncio.
 
 Para uma fonte nativa nova (outro app de treino), o caminho é implementar `WorkoutSource` — dois
 métodos — em `sources/`. Render, matching, marcação e destinos continuam iguais.
@@ -216,20 +241,24 @@ métodos — em `sources/`. Render, matching, marcação e destinos continuam ig
 ## Segredos: tirando a senha do texto puro
 
 Por padrão a senha do MFIT fica em texto puro no `.env`. Se o seu disco não tem criptografia
-(a maioria dos desktops Linux não tem), isso significa que **qualquer cópia do disco entrega a
+(a maioria dos desktops não tem), isso significa que **qualquer cópia do disco entrega a
 credencial**: backup que subiu para a nuvem, notebook perdido, ou um SSD devolvido em garantia.
+
+<div align="center">
+  <img src="docs/secrets.svg" alt="Saída do comando segredos status" width="720">
+</div>
 
 ```bash
 mfit2keep segredos status              # onde cada segredo está hoje
 mfit2keep segredos proteger --escrever # cifra e reescreve o .env
 ```
 
-O `proteger` usa a cifragem nativa do seu sistema — em todos os casos a chave fica presa à
+O `proteger` usa a cifragem nativa do seu sistema. Em todos os casos a chave fica presa à
 **máquina e à conta**, então o blob é lixo em qualquer outro lugar:
 
 | Sistema | Ferramenta | Amarrado a |
 | --- | --- | --- |
-| Linux | `systemd-creds --user` | TPM2 da placa + conta |
+| Linux | [`systemd-creds --user`](https://www.freedesktop.org/software/systemd/man/systemd-creds.html) | TPM2 da placa + conta |
 | Windows | DPAPI (`CryptProtectData`) | perfil do usuário + máquina |
 | macOS e outros | — | o app avisa e mantém tudo no keyring |
 
@@ -239,18 +268,20 @@ O `.env` fica assim:
 MFIT_PASSWORD_ENC=70rBNnmpSA6n22iJf58WXSAAAAABAAAADAAAABAAAACUiIoXv32WLPJcrlAAAA...
 ```
 
-O blob é inútil em qualquer outra máquina, e o app decifra sozinho — **sem prompt, então continua
-funcionando em cron**. O segredo nunca passa por `argv` (visível no `ps`), só por stdin.
+O blob é inútil em qualquer outra máquina, decifra sem prompt (**continua funcionando em cron ou
+no Agendador de Tarefas**) e o segredo nunca passa por `argv` — só por stdin, para não aparecer
+no `ps`.
 
 > [!WARNING]
 > Isto protege o **dado em repouso**, não a execução. Um programa malicioso rodando com o seu
-> usuário simplesmente chama `systemd-creds decrypt`, igual ao app. Nenhuma alternativa
-> (keyring, sops, age, gpg-agent destravado) muda isso — quem tem o seu UID tem os seus segredos.
-> O ganho real é: disco roubado, backup vazado e `git add -f` acidental deixam de ser catástrofe.
+> usuário simplesmente chama a mesma API de decifragem que o app. Nenhuma alternativa
+> (keyring, sops, age, gpg-agent destravado) muda isso — quem tem o seu usuário tem os seus
+> segredos. O ganho real é: disco roubado, backup vazado e `git add -f` acidental deixam de ser
+> catástrofe.
 
 Como a chave depende da máquina, **guarde a senha num gerenciador**: reinstalar o sistema, trocar
 a placa, limpar o TPM ou recriar o perfil do Windows exige redigitar. Onde não há cifragem nativa,
-o comando avisa em vez de fingir que cifrou, e o master token segue no keyring do sistema.
+o comando avisa em vez de fingir que cifrou.
 
 ## Segurança: como o app sabe o que é dele
 
@@ -265,6 +296,9 @@ async def test_purge_trashes_only_marked_notes(...):
     ...
     assert not minha.trashed
 ```
+
+O destino local tem a mesma garantia por outro caminho: ele **se recusa a sobrescrever** um `.md`
+sem o carimbo, em vez de destruir uma anotação sua que por acaso tenha o mesmo nome.
 
 Como o label aparece na barra lateral do Keep, você também consegue filtrar e apagar tudo pela
 interface, sem o app.
@@ -291,25 +325,26 @@ app OAuth precisa estar **"In production"** ou o refresh token morre a cada 7 di
 
 ```
 src/mfit2keep/
-├── models.py         # Workout / Exercise / ChecklistNote — o meio, sem dependência
-├── interchange.py    # formato neutro (JSON) — o pivô entre fonte e destino
-├── render.py         # Workout       →  ChecklistNote (formato do relógio)
-├── matching.py       # casa itens antigos/novos sem perder o que foi marcado
-├── sources/          # DE ONDE vêm os treinos
-│   ├── base.py       #   interface WorkoutSource
-│   ├── mfit.py       #   MFIT: junta cliente + parser
-│   ├── mfit_api.py   #   cliente async da API (httpx + TaskGroup)
-│   ├── mfit_parser.py#   JSON do MFIT  →  Workout
-│   └── workout_file.py #  arquivo no formato neutro
-├── destinations/     # PARA ONDE vão as notas
-│   ├── base.py       #   interface NoteDestination + marcação
-│   ├── keep.py       #   Google Keep via gkeepapi
-│   └── local.py      #   arquivos Markdown
-├── keep_auth.py      # master token: troca, keyring, fallback em arquivo
-├── secrets_store.py  # cifragem dos segredos com systemd-creds (TPM2)
-├── secure_io.py      # escrita restrita e atômica + trava entre processos (fcntl/msvcrt)
-├── _dpapi.py         # DPAPI do Windows via ctypes, sem dependência extra
-└── cli.py            # Typer + Rich
+├── models.py           # Workout · Exercise · ChecklistNote — o meio, sem dependência
+├── interchange.py      # formato neutro (JSON): o pivô entre fonte e destino
+├── render.py           # Workout  →  ChecklistNote (a linha que cabe no relógio)
+├── matching.py         # casa itens antigos/novos sem perder o que foi marcado
+├── sources/            # DE ONDE vêm os treinos
+│   ├── base.py         #   interface WorkoutSource
+│   ├── mfit.py         #   MFIT: junta cliente + parser
+│   ├── mfit_api.py     #   cliente async da API (httpx + TaskGroup)
+│   ├── mfit_parser.py  #   JSON do MFIT  →  Workout
+│   └── workout_file.py #   arquivo no formato neutro
+├── destinations/       # PARA ONDE vão as notas
+│   ├── base.py         #   interface NoteDestination + a marcação
+│   ├── keep.py         #   Google Keep via gkeepapi
+│   └── local.py        #   arquivos Markdown
+├── config.py           # .env e diretórios por sistema
+├── keep_auth.py        # master token: troca, keyring, fallback em arquivo
+├── secrets_store.py    # cifragem nativa: systemd-creds (Linux) / DPAPI (Windows)
+├── _dpapi.py           # DPAPI via ctypes, sem dependência extra
+├── secure_io.py        # escrita restrita e atômica + trava (fcntl/msvcrt)
+└── cli.py              # Typer + Rich
 ```
 
 Detalhes que valem saber:
@@ -319,6 +354,9 @@ Detalhes que valem saber:
 - A ordem dos exercícios exige `sort` inteiro decrescente e explícito. `List.add()` sem `sort`
   embaralha a lista silenciosamente — há teste cobrindo isso.
 - O lote inteiro sobe com **um único `sync()`**, para ficar longe de qualquer rate limit.
+- O mapa `external_id → id da nota` é gravado sob trava entre processos e **antes** do cache de
+  estado: perdê-lo faria a execução seguinte duplicar todas as notas.
+- Imports são sempre absolutos (o `ruff` bane relativos), então rodar o arquivo direto funciona.
 
 ### API do MFIT
 
@@ -334,14 +372,17 @@ Mapeada a partir do bundle do SPA. Autenticação é `authorization: <jwt>` — 
 ## Desenvolvimento
 
 ```bash
-pytest              # 216 testes
+pytest                            # 222 testes
 ruff check src tests
 ruff format src tests
-mypy                # strict
+mypy --platform linux             # o código tem caminho por sistema:
+mypy --platform win32             # checar um só deixa metade sem verificação
+python docs/make_screenshots.py   # regenera os SVGs do README
 ```
 
 Os testes do Keep usam um `gkeepapi.Keep` **real** com a rede desligada, então a lógica de
-ordenação e de lista é a da biblioteca de verdade — regressão de ordem falha o teste.
+ordenação e de lista é a da biblioteca de verdade — regressão de ordem falha o teste. Os testes
+específicos de sistema se auto-pulam onde não se aplicam, e o CI roda a suíte nos três sistemas.
 
 ## Limitações e riscos
 
@@ -349,7 +390,7 @@ ordenação e de lista é a da biblioteca de verdade — regressão de ordem fal
   qualquer momento. Provavelmente contra os termos de uso do Google.
 - **O master token equivale à senha.** Acesso total à conta, sem escopo, e não expira. O Google
   revoga em troca de senha ou evento de "atividade suspeita".
-- **Um nível de aninhamento.** O Keep aceita sub-itens só um nível abaixo.
+- **A cifragem é presa à máquina.** Trocar de computador exige redigitar os segredos.
 - Testado com rotinas do tipo A/B/C/D/E. Circuitos e séries combinadas são reconhecidos, mas
   tiveram menos exposição a dados reais.
 
