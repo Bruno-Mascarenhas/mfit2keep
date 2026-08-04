@@ -76,14 +76,17 @@ def frontend_dir() -> Path:
 def read_state() -> dict[str, Any]:
     """O que a tela precisa saber — sem devolver segredo nenhum."""
     settings = load_settings()
+    # Uma consulta só: a tela recarrega o estado depois de cada ação, e cada
+    # chamada destas bate no keyring.
+    onde_esta_o_token = keep_auth.stored_backend(settings)
     return {
         "env_file": str(env_file()),
         "mfit_email": settings.email or "",
         "google_email": settings.google_email or "",
         "tem_senha": bool(settings.password or settings.password_enc),
         "senha_cifrada": bool(settings.password_enc),
-        "token_keep": str(keep_auth.stored_backend(settings)),
-        "tem_token_keep": keep_auth.stored_backend(settings) is not secrets_store.Backend.ABSENT,
+        "token_keep": str(onde_esta_o_token),
+        "tem_token_keep": onde_esta_o_token is not secrets_store.Backend.ABSENT,
         "cifragem_disponivel": secrets_store.cipher_available(),
         "cifragem_nome": secrets_store.cipher_name(),
     }

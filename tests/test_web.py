@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from mfit2keep import web
+from mfit2keep import keep_auth, web
 from mfit2keep.config import ConfigError
 
 
@@ -201,3 +201,22 @@ def test_frontend_files_exist() -> None:
     assert (diretorio / "index.html").is_file()
     assert (diretorio / "app.js").is_file()
     assert (diretorio / "style.css").is_file()
+
+
+def test_state_queries_the_keyring_only_once(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chamadas = 0
+    original = keep_auth.stored_backend
+
+    def contando(settings: Any) -> Any:
+        nonlocal chamadas
+        chamadas += 1
+        return original(settings)
+
+    monkeypatch.setattr(keep_auth, "stored_backend", contando)
+
+    web.read_state()
+
+    # A tela recarrega o estado depois de cada ação; cada consulta bate no keyring.
+    assert chamadas == 1

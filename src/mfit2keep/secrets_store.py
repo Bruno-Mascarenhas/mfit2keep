@@ -100,7 +100,21 @@ class SystemdCredsBackend(CipherBackend):
 
     name = "systemd-creds (TPM2)"
 
+    def __init__(self) -> None:
+        self._available: bool | None = None
+
     def available(self) -> bool:
+        """A sonda cifra de verdade, então a resposta é lembrada.
+
+        Não dá para saber sem tentar (o binário existir não garante escopo de
+        usuário). Mas isso não muda durante a execução, e o painel refaz o
+        estado a cada ação — sem o cache, cada clique custaria um subprocesso.
+        """
+        if self._available is None:
+            self._available = self._probe()
+        return self._available
+
+    def _probe(self) -> bool:
         if shutil.which("systemd-creds") is None:
             return False
         try:

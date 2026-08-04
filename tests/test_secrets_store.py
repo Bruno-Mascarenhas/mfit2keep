@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 import sys
 
@@ -132,3 +133,38 @@ def test_blob_is_single_line_for_the_env_file() -> None:
 
     # Um .env não aceita valor multilinha sem aspas.
     assert "\n" not in blob
+
+
+def test_availability_probe_runs_only_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    chamadas = 0
+
+    def contando(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal chamadas
+        chamadas += 1
+        return subprocess.CompletedProcess(command, 0, stdout="blob", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", contando)
+    monkeypatch.setattr(shutil, "which", lambda _nome: "/usr/bin/systemd-creds")
+    backend = secrets_store.SystemdCredsBackend()
+
+    for _ in range(5):
+        assert backend.available() is True
+
+    # A sonda cifra de verdade; o painel refaz o estado a cada clique, e sem o
+    # cache cada clique custaria um subprocesso.
+    assert chamadas == 1
+
+
+def test_availability_is_remembered_even_when_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda _nome: None)
+    backend = secrets_store.SystemdCredsBackend()
+
+    assert backend.available() is False
+    assert backend.available() is False
+
+
+def test_a_new_backend_probes_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda _nome: None)
+
+    # O cache é por instância: trocar de backend não herda resposta velha.
+    assert secrets_store.SystemdCredsBackend()._available is None
