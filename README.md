@@ -100,13 +100,30 @@ mesmo `Workout` que sai pelo `exportar`, então dá para largar o MFIT sem larga
 Roda em **Linux, Windows e macOS** — o CI executa a suíte nos três a cada PR. Precisa de
 **Python 3.14+**.
 
+Se ainda não tem o [uv](https://docs.astral.sh/uv/), instale primeiro:
+
+```bash
+# Linux e macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Windows (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Depois:
+
 ```bash
 git clone https://github.com/Bruno-Mascarenhas/mfit2keep.git
 cd mfit2keep
 
 uv venv --python 3.14
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 uv pip install -e ".[dev]"
 ```
+
+> [!NOTE]
+> O `activate` não é opcional: sem ele o comando `mfit2keep` não fica disponível.
+> Se preferir não ativar nada, todo comando funciona com `uv run` na frente —
+> por exemplo `uv run mfit2keep painel`.
 
 <details>
 <summary>Com conda para o interpretador</summary>
@@ -146,7 +163,11 @@ no Windows, `Application Support` no macOS).
 ### 2. Google Keep
 
 A API oficial do Keep **não atende conta pessoal** (veja [abaixo](#por-que-gkeepapi-e-não-a-api-oficial)),
-então o acesso é por *master token* — um ritual manual, **uma vez só**:
+então o acesso é por *master token* — um ritual manual, **uma vez só**.
+
+> [!TIP]
+> O [painel](#painel-no-navegador) faz este passo com a receita na tela, em português e sem
+> terminal: `mfit2keep painel`. O que vem abaixo é o mesmo ritual, pela linha de comando.
 
 ```bash
 mfit2keep keep-login
