@@ -22,21 +22,29 @@ import contextlib
 import hashlib
 import json
 import secrets
+import warnings
 from dataclasses import dataclass
 
 import gpsoauth
 import keyring
 from keyring.errors import KeyringError
 
-from .config import STATE_DIR, Settings
+from mfit2keep.config import STATE_DIR, Settings
+from mfit2keep.secure_io import write_secret
 
 SERVICE = "mfit2keep"
+#: Chave de fallback no keyring, para quando a conta não está no .env.
+DEFAULT_ACCOUNT = "__default__"
 #: Fallback quando não há keyring (servidor headless, container).
 TOKEN_FILE = STATE_DIR / "keep_token.json"
 
 
 class KeepAuthError(RuntimeError):
     """Falha ao obter ou recuperar o master token."""
+
+
+class KeyringUnavailableWarning(UserWarning):
+    """O master token caiu para o arquivo de fallback, em texto puro."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,12 +81,20 @@ async def exchange_oauth_token(email: str, oauth_token: str, device_id: str | No
 
     token = response.get("Token")
     if not token:
+        # NUNCA ecoar a resposta inteira: em caso de sucesso parcial ela traz
+        # Auth/SID/LSID, que são credenciais tão boas quanto o master token.
         raise KeepAuthError(
-            "O Google não devolveu o master token. Resposta: "
-            f"{response.get('Error') or response}. "
-            "O cookie oauth_token é de uso único — refaça o passo 1 numa aba anônima nova."
+            f"O Google não devolveu o master token (erro: {_safe_error(response)}). "
+            "O cookie oauth_token é de uso único e vale poucos minutos — "
+            "refaça o passo 1 numa aba anônima nova."
         )
     return token
+
+
+def _safe_error(response: dict[str, str]) -> str:
+    """Extrai só o código de erro, que não é segredo."""
+    code = response.get("Error") or response.get("ErrorDetail") or "desconhecido"
+    return str(code)[:120]
 
 
 def store(credentials: KeepCredentials) -> str:
@@ -92,10 +108,22 @@ def store(credentials: KeepCredentials) -> str:
     )
     try:
         keyring.set_password(SERVICE, credentials.email, payload)
+        # Também sob uma chave fixa: o `keep-login` aceita a conta por --email
+        # ou por prompt, que não ficam gravados em lugar nenhum. Sem isto, um
+        # .env sem GOOGLE_EMAIL torna o token guardado inalcançável.
+        keyring.set_password(SERVICE, DEFAULT_ACCOUNT, payload)
     except KeyringError:
-        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        TOKEN_FILE.write_text(payload, encoding="utf-8")
-        TOKEN_FILE.chmod(0o600)
+        # Sem D-Bus (cron, SSH, container) o keyring some e o master token
+        # degradaria para texto puro em silêncio — justamente quando ninguém
+        # está olhando. O arquivo já nasce 0600, mas o aviso é obrigatório.
+        write_secret(TOKEN_FILE, payload)
+        warnings.warn(
+            f"Keyring indisponível: o master token foi gravado em texto puro em {TOKEN_FILE}. "
+            "Refaça o login numa sessão gráfica, ou use GOOGLE_MASTER_TOKEN_ENC "
+            "(`mfit2keep segredos proteger`).",
+            KeyringUnavailableWarning,
+            stacklevel=2,
+        )
         return str(TOKEN_FILE)
     return f"keyring ({SERVICE})"
 
@@ -109,25 +137,33 @@ def load(settings: Settings) -> KeepCredentials:
     """
     email = settings.google_email
 
-    if settings.google_master_token:
+    if from_env := settings.resolved_master_token():
         if not email:
             raise KeepAuthError("Defina GOOGLE_EMAIL no .env — o Keep precisa saber a conta.")
-        _reject_oauth_cookie(settings.google_master_token)
+        _reject_oauth_cookie(from_env)
         return KeepCredentials(
             email=email,
-            master_token=settings.google_master_token,
+            master_token=from_env,
             device_id=_stable_device_id(email),
         )
 
     payload: str | None = None
-    if email:
-        try:
+    try:
+        if email:
             payload = keyring.get_password(SERVICE, email)
-        except KeyringError:
-            payload = None
+        if payload is None:
+            payload = keyring.get_password(SERVICE, DEFAULT_ACCOUNT)
+    except KeyringError:
+        payload = None
 
     if payload is None and TOKEN_FILE.exists():
         payload = TOKEN_FILE.read_text(encoding="utf-8")
+        warnings.warn(
+            f"Master token lido de {TOKEN_FILE}, em texto puro. "
+            "Refaça `mfit2keep keep-login` numa sessão gráfica para movê-lo ao keyring.",
+            KeyringUnavailableWarning,
+            stacklevel=2,
+        )
 
     if payload is None:
         raise KeepAuthError("Nenhum master token guardado. Rode `mfit2keep keep-login` primeiro.")
@@ -159,6 +195,7 @@ def _reject_oauth_cookie(token: str) -> None:
 
 
 def forget(email: str) -> None:
-    with contextlib.suppress(KeyringError):
-        keyring.delete_password(SERVICE, email)
+    for account in (email, DEFAULT_ACCOUNT):
+        with contextlib.suppress(KeyringError):
+            keyring.delete_password(SERVICE, account)
     TOKEN_FILE.unlink(missing_ok=True)

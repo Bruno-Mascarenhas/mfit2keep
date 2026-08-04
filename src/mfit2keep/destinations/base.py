@@ -10,7 +10,7 @@ from enum import StrEnum
 from types import TracebackType
 from typing import Self
 
-from ..models import ChecklistNote
+from mfit2keep.models import ChecklistNote
 
 #: Marca que identifica o que este app criou. Só o que tem a marca pode ser
 #: apagado ou arquivado — as notas que já existiam na conta ficam intocadas.

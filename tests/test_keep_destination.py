@@ -317,3 +317,71 @@ async def test_sync_after_purge_creates_a_fresh_note(credentials: KeepCredential
 
     # A nota velha foi para a lixeira; sincronizar de novo cria outra, não a ressuscita.
     assert result.action is Action.CREATED
+
+
+async def test_note_without_the_label_is_never_rewritten(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all([note("1. Supino")])
+
+    # O usuário tira o label na mão (ou o id do mapa é de outra conta).
+    nossa = next(iter(client.all()))
+    label = client.findLabel(MARKER)
+    nossa.labels.remove(label)
+
+    [result] = await destination.upsert_all([note("1. Supino", "2. Crucifixo")])
+
+    assert result.action is Action.CREATED
+    assert [item.text for item in nossa.items] == ["1. Supino"]
+
+
+async def test_archiving_releases_the_link(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all([note("1. Supino")])
+    await destination.purge(archive=True)
+
+    [result] = await destination.upsert_all([note("1. Supino")])
+
+    # Sem soltar o vínculo, o sync atualizaria a nota arquivada e invisível.
+    assert result.action is Action.CREATED
+    assert len([n for n in client.all() if not n.archived and not n.trashed]) == 1
+
+
+async def test_renumbering_keeps_the_marks(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all([note("1. Aquecimento — 5min", "2. Supino — 4x10")])
+
+    nossa = next(iter(client.all()))
+    nossa.items[1].checked = True  # marcou o Supino no relógio
+
+    await destination.upsert_all([note("1. Supino — 4x10")])
+
+    assert [(i.text, i.checked) for i in nossa.items] == [("1. Supino — 4x10", True)]
+
+
+async def test_load_change_keeps_the_marks(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all([note("1. Supino — 4x10")])
+
+    nossa = next(iter(client.all()))
+    nossa.items[0].checked = True
+
+    await destination.upsert_all([note("1. Supino — 4x10 · 30kg")])
+
+    assert nossa.items[0].checked is True
+
+
+async def test_duplicate_exercises_do_not_share_one_mark(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all([note("Rosca — 3x12", "Rosca — 1x20")])
+
+    nossa = next(iter(client.all()))
+    nossa.items[0].checked = True  # só a primeira ocorrência
+
+    await destination.upsert_all([note("Rosca — 3x12", "Rosca — 1x20", "Tríceps — 3x12")])
+
+    assert [i.checked for i in nossa.items] == [True, False, False]

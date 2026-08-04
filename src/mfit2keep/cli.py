@@ -4,21 +4,22 @@ import asyncio
 from collections.abc import Coroutine
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import keep_auth
-from .config import PROJECT_ROOT, ConfigError, load_settings
-from .destinations.base import MARKER, NoteDestination, NoteResult
-from .destinations.local import LocalMarkdownDestination
-from .keep_auth import KeepAuthError
-from .mfit import MfitClient, MfitError
-from .models import Workout
-from .render import RenderOptions
-from .sync import build_notes, fetch_workouts, list_routines
+from mfit2keep import keep_auth, secrets_store
+from mfit2keep.config import PROJECT_ROOT, ConfigError, env_file, load_settings
+from mfit2keep.destinations.base import MARKER, NoteDestination, NoteResult
+from mfit2keep.destinations.local import LocalDestinationError, LocalMarkdownDestination
+from mfit2keep.keep_auth import KeepAuthError
+from mfit2keep.mfit import MfitClient, MfitError
+from mfit2keep.models import Workout
+from mfit2keep.render import RenderOptions
+from mfit2keep.secure_io import write_secret
+from mfit2keep.sync import build_notes, fetch_workouts, list_routines
 
 app = typer.Typer(
     add_completion=False,
@@ -27,7 +28,7 @@ app = typer.Typer(
 )
 console = Console()
 
-EXPECTED_ERRORS = (ConfigError, MfitError, KeepAuthError)
+EXPECTED_ERRORS = (ConfigError, MfitError, KeepAuthError, LocalDestinationError)
 
 
 class Destino(StrEnum):
@@ -42,13 +43,24 @@ Load = Annotated[bool, typer.Option("--carga/--sem-carga")]
 Width = Annotated[int, typer.Option("--largura", help="Corta a linha; 0 = sem corte.")]
 
 
+def _fail(exc: BaseException) -> NoReturn:
+    console.print(f"[red]{exc}[/]")
+    raise typer.Exit(code=1) from None
+
+
 def _run[T](coro: Coroutine[Any, Any, T]) -> T:
     """Executa a corrotina e transforma erro esperado em mensagem limpa."""
     try:
         return asyncio.run(coro)
     except EXPECTED_ERRORS as exc:
-        console.print(f"[red]{exc}[/]")
-        raise typer.Exit(code=1) from None
+        _fail(exc)
+    except BaseExceptionGroup as group:
+        # O TaskGroup que busca os dias em paralelo embrulha a exceção original;
+        # sem desembrulhar, o usuário veria um traceback de ExceptionGroup.
+        expected, _ = group.split(EXPECTED_ERRORS)
+        if expected is None:
+            raise
+        _fail(expected.exceptions[0])
 
 
 def _options(numbered: bool, rest: bool, load: bool, width: int) -> RenderOptions:
@@ -59,7 +71,7 @@ def _options(numbered: bool, rest: bool, load: bool, width: int) -> RenderOption
 
 def _destination(destino: Destino, out_dir: Path) -> NoteDestination:
     if destino is Destino.KEEP:
-        from .destinations.keep import KeepDestination
+        from mfit2keep.destinations.keep import KeepDestination
 
         return KeepDestination(keep_auth.load(load_settings()))
     return LocalMarkdownDestination(out_dir)
@@ -163,6 +175,121 @@ def purge_command(
     for result in results:
         table.add_row(result.note_title, str(result.action), result.reference or "")
     console.print(table)
+
+
+segredos = typer.Typer(help="Tira os segredos do texto puro, cifrando com o TPM da máquina.")
+app.add_typer(segredos, name="segredos")
+
+#: (variável em texto puro, variável cifrada, chave do systemd-creds, rótulo)
+_SECRETS = (
+    ("MFIT_PASSWORD", "MFIT_PASSWORD_ENC", "mfit_password", "senha do MFIT"),
+    (
+        "GOOGLE_MASTER_TOKEN",
+        "GOOGLE_MASTER_TOKEN_ENC",
+        "google_master_token",
+        "master token do Google",
+    ),
+)
+
+
+@segredos.command("status")
+def secrets_status() -> None:
+    """Mostra onde cada segredo está guardado hoje."""
+    settings = load_settings()
+    values = {
+        "MFIT_PASSWORD": (settings.password, settings.password_enc),
+        "GOOGLE_MASTER_TOKEN": (settings.google_master_token, settings.google_master_token_enc),
+    }
+
+    table = Table("Segredo", "Onde está", title=f"Segredos em {env_file()}")
+    exposed = False
+    for plain_var, _enc_var, _key, label in _SECRETS:
+        plaintext, encrypted = values[plain_var]
+        backend = secrets_store.backend_of(plaintext=plaintext, encrypted=encrypted)
+        color = "red" if backend is secrets_store.Backend.PLAINTEXT else "green"
+        exposed = exposed or backend is secrets_store.Backend.PLAINTEXT
+        table.add_row(label, f"[{color}]{backend}[/]")
+    console.print(table)
+
+    if not secrets_store.systemd_creds_available():
+        console.print("[yellow]systemd-creds indisponível nesta máquina.[/]")
+        return
+    if exposed:
+        console.print("Rode [bold]mfit2keep segredos proteger[/] para cifrar o que está exposto.")
+    else:
+        console.print("[green]Nada em texto puro.[/]")
+
+
+@segredos.command("proteger")
+def secrets_protect(
+    write: Annotated[
+        bool, typer.Option("--escrever/--mostrar", help="Reescreve o .env ou só imprime.")
+    ] = False,
+) -> None:
+    """Cifra os segredos do .env com o TPM2 desta máquina.
+
+    O blob resultante só decifra aqui: cópia de backup, disco roubado ou SSD
+    devolvido em RMA não servem para nada.
+    """
+    if not secrets_store.systemd_creds_available():
+        _fail(
+            ConfigError(
+                "systemd-creds não está disponível para o seu usuário. "
+                "Sem ele, o master token continua no keyring e a senha, no .env."
+            )
+        )
+
+    settings = load_settings()
+    plaintexts = {
+        "MFIT_PASSWORD": settings.password,
+        "GOOGLE_MASTER_TOKEN": settings.google_master_token,
+    }
+
+    lines: list[str] = []
+    for plain_var, enc_var, key, label in _SECRETS:
+        value = plaintexts[plain_var]
+        if not value:
+            console.print(f"[dim]{label}: nada em texto puro para cifrar.[/]")
+            continue
+        try:
+            lines.append(f"{enc_var}={secrets_store.encrypt(key, value)}")
+        except secrets_store.SecretsError as exc:
+            _fail(exc)
+        console.print(f"[green]{label}: cifrado.[/]")
+
+    if not lines:
+        console.print("Nada a fazer.")
+        return
+
+    if write:
+        _rewrite_env(lines)
+        console.print(
+            f"\n[green]{env_file()} atualizado.[/] As linhas em texto puro foram removidas."
+        )
+    else:
+        console.print("\nCole no seu .env e [bold]apague as linhas em texto puro[/]:\n")
+        for line in lines:
+            console.print(line)
+        console.print("\n(ou rode de novo com [bold]--escrever[/] para eu fazer isso)")
+
+    console.print(
+        "\n[yellow]Guarde a senha num gerenciador:[/] o blob depende do TPM desta placa. "
+        "Reinstalar o sistema ou trocar de máquina exige redigitar."
+    )
+
+
+def _rewrite_env(new_lines: list[str]) -> None:
+    """Troca as variáveis em texto puro pelas cifradas, preservando o resto."""
+    path = env_file()
+    replaced = {line.split("=", 1)[0] for line in new_lines}
+    dropped = {enc.removesuffix("_ENC") for enc in replaced}
+
+    kept = [
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.split("=", 1)[0].strip() not in dropped | replaced
+    ]
+    write_secret(path, "\n".join([*kept, *new_lines]) + "\n")
 
 
 @app.command("keep-login")

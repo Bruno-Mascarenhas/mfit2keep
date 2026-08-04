@@ -19,12 +19,17 @@ from typing import Any, Self
 
 import httpx
 
-from .config import STATE_DIR, Settings
+from mfit2keep.config import STATE_DIR, Settings
+from mfit2keep.secure_io import read_secret_json, write_secret_json
 
 type Json = Any
 
 BASE_URL = "https://api.mfitpersonal.com.br"
 TIMEOUT = httpx.Timeout(20.0)
+#: Reenvio só para o que é transitório; 4xx sobe na hora.
+RETRIABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+RETRY_ATTEMPTS = 3
+RETRY_INITIAL_DELAY = 1.0
 TOKEN_CACHE = STATE_DIR / "mfit_token.json"
 
 
@@ -75,16 +80,18 @@ class MfitClient:
         return self._token
 
     def _cached_token(self) -> str | None:
-        try:
-            cached = json.loads(TOKEN_CACHE.read_text())["token"]
-        except OSError, ValueError, KeyError:
-            return None
+        """Cache corrompido é cache-miss, nunca exceção.
+
+        ``read_secret_json`` já rejeita o que não for objeto JSON: um arquivo
+        truncado (disco com bad block, escrita interrompida) precisa levar a um
+        login novo, não derrubar o comando.
+        """
+        cached = (read_secret_json(TOKEN_CACHE) or {}).get("token")
         return cached if isinstance(cached, str) and cached else None
 
     def _store_token(self, token: str) -> None:
-        TOKEN_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        TOKEN_CACHE.write_text(json.dumps({"token": token}))
-        TOKEN_CACHE.chmod(0o600)
+        # O JWT do MFIT vale ~400 dias: nasce 0600, sem passar por 0664.
+        write_secret_json(TOKEN_CACHE, {"token": token})
 
     async def _login(self) -> str:
         email, password = self._settings.require_credentials()
@@ -123,10 +130,33 @@ class MfitClient:
         return response.json()
 
     async def _authenticated_get(self, path: str) -> httpx.Response:
-        return await self._client.get(
-            f"{self._base_url}{path}",
-            headers={"authorization": await self.token()},
-        )
+        """GET com backoff: falha transitória de rede não pode abortar o sync.
+
+        Só reenvia o que é seguro reenviar — GET é idempotente — e só para
+        erro de transporte, 429 e 5xx. 4xx de verdade sobe na hora.
+        """
+        delay = RETRY_INITIAL_DELAY
+        last_error: Exception | None = None
+
+        for attempt in range(1, RETRY_ATTEMPTS + 1):
+            try:
+                response = await self._client.get(
+                    f"{self._base_url}{path}",
+                    headers={"authorization": await self.token()},
+                )
+            except httpx.TransportError as exc:
+                last_error = exc
+            else:
+                if response.status_code not in RETRIABLE_STATUS:
+                    return response
+                last_error = MfitError(f"GET {path} devolveu {response.status_code}")
+
+            if attempt == RETRY_ATTEMPTS:
+                break
+            await asyncio.sleep(delay)
+            delay *= 2
+
+        raise MfitError(f"GET {path} falhou após {RETRY_ATTEMPTS} tentativas: {last_error}")
 
     # -------------------------------------------------------------- endpoints
 

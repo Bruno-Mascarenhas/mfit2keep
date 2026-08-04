@@ -2,12 +2,12 @@
 
 from typing import Any
 
-from .config import Settings
-from .destinations.base import NoteDestination, NoteResult
-from .mfit import MfitClient
-from .models import ChecklistNote, Workout
-from .parser import parse_routine, parse_session
-from .render import RenderOptions, routine_to_notes
+from mfit2keep.config import Settings
+from mfit2keep.destinations.base import NoteDestination, NoteResult
+from mfit2keep.mfit import MfitClient
+from mfit2keep.models import ChecklistNote, Workout
+from mfit2keep.parser import parse_routine, parse_session
+from mfit2keep.render import RenderOptions, routine_to_notes
 
 
 async def fetch_workouts(client: MfitClient, routine_id: int | str) -> list[Workout]:
