@@ -1,0 +1,258 @@
+/* Uma folha só, sem framework: a tela tem quatro passos e precisa carregar
+   instantaneamente mesmo sem rede. */
+
+:root {
+  --fundo: #f6f7f9;
+  --cartao: #ffffff;
+  --texto: #1c1f24;
+  --suave: #5b6470;
+  --borda: #dfe3e8;
+  --acento: #1a73e8;
+  --ok: #137333;
+  --alerta: #b06000;
+  --erro: #c5221f;
+  --raio: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #16181d;
+    --cartao: #1f2229;
+    --texto: #e8eaed;
+    --suave: #9aa3af;
+    --borda: #333842;
+    --acento: #8ab4f8;
+    --ok: #81c995;
+    --alerta: #fdd663;
+    --erro: #f28b82;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 2rem 1rem 3rem;
+  background: var(--fundo);
+  color: var(--texto);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+header,
+main,
+footer {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.9rem;
+}
+
+.sub {
+  margin: 0.25rem 0 1.5rem;
+  color: var(--suave);
+}
+
+.passo {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 1.25rem 1.5rem 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.passo h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+}
+
+/* O número grande é o que faz a pessoa entender que há uma ordem. */
+.numero {
+  display: grid;
+  place-items: center;
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 50%;
+  background: var(--acento);
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  flex: none;
+}
+
+.passo.pronto .numero {
+  background: var(--ok);
+}
+
+.opcional {
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--suave);
+  border: 1px solid var(--borda);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+
+.ajuda {
+  margin: 0 0 1rem;
+  color: var(--suave);
+  font-size: 0.94rem;
+}
+
+label {
+  display: block;
+  margin: 0.9rem 0 0.3rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+input,
+select {
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--fundo);
+  color: var(--texto);
+  font-size: 1rem;
+}
+
+input:focus,
+select:focus {
+  outline: 2px solid var(--acento);
+  outline-offset: 1px;
+}
+
+select {
+  width: auto;
+  min-width: 12rem;
+}
+
+.acoes {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1.1rem;
+}
+
+button {
+  padding: 0.6rem 1.1rem;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--fundo);
+  color: var(--texto);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--acento);
+}
+
+button.primario {
+  background: var(--acento);
+  border-color: var(--acento);
+  color: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  button.primario {
+    color: #16181d;
+  }
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.estado {
+  font-size: 0.9rem;
+}
+
+.estado.ok {
+  color: var(--ok);
+}
+
+.estado.erro {
+  color: var(--erro);
+}
+
+.receita {
+  margin: 0 0 1rem;
+  padding-left: 1.3rem;
+  font-size: 0.94rem;
+}
+
+.receita li {
+  margin-bottom: 0.4rem;
+}
+
+.aviso {
+  background: color-mix(in srgb, var(--alerta) 12%, transparent);
+  border-left: 3px solid var(--alerta);
+  border-radius: 6px;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.9rem;
+}
+
+code,
+kbd {
+  background: var(--fundo);
+  border: 1px solid var(--borda);
+  border-radius: 5px;
+  padding: 0.05rem 0.35rem;
+  font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+  font-size: 0.85em;
+}
+
+a {
+  color: var(--acento);
+}
+
+table {
+  width: 100%;
+  margin-top: 1rem;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid var(--borda);
+}
+
+th {
+  color: var(--suave);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+footer {
+  margin-top: 1.5rem;
+  color: var(--suave);
+  font-size: 0.86rem;
+}
+
+#resumo {
+  margin: 0 0 0.4rem;
+}
+
+.fina {
+  margin: 0;
+  opacity: 0.85;
+}

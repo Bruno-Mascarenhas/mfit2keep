@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mfit2keep</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>🏋️ mfit2keep</h1>
+      <p class="sub">Seus treinos do MFIT viram notas com checkbox no Google Keep.</p>
+    </header>
+
+    <main>
+      <!-- Passo 1 -->
+      <section class="passo" id="passo-conta">
+        <h2><span class="numero">1</span> Sua conta do MFIT</h2>
+        <p class="ajuda">O mesmo e-mail e senha que você usa no site do MFIT Personal.</p>
+
+        <label for="mfit_email">E-mail do MFIT</label>
+        <input id="mfit_email" type="email" autocomplete="username" placeholder="voce@exemplo.com" />
+
+        <label for="mfit_password">Senha do MFIT</label>
+        <input
+          id="mfit_password"
+          type="password"
+          autocomplete="current-password"
+          placeholder="deixe em branco para não alterar"
+        />
+
+        <label for="google_email">Sua conta Google (onde as notas vão aparecer)</label>
+        <input id="google_email" type="email" placeholder="voce@gmail.com" />
+
+        <div class="acoes">
+          <button id="salvar" class="primario">Salvar</button>
+          <span class="estado" id="estado-conta"></span>
+        </div>
+      </section>
+
+      <!-- Passo 2 -->
+      <section class="passo" id="passo-keep">
+        <h2><span class="numero">2</span> Liberar o Google Keep</h2>
+        <p class="ajuda">
+          O Google não deixa aplicativos criarem notas em conta pessoal pelo caminho normal.
+          Por isso este passo é manual — mas é <strong>uma vez só</strong>.
+        </p>
+
+        <ol class="receita">
+          <li>
+            Abra
+            <a href="https://accounts.google.com/EmbeddedSetup" target="_blank" rel="noopener">
+              esta página do Google</a
+            >
+            numa <strong>janela anônima</strong>.
+          </li>
+          <li>Faça login e clique em <strong>Eu concordo</strong>.</li>
+          <li>
+            A página vai ficar <strong>girando para sempre</strong> — isso é normal, pode ignorar.
+          </li>
+          <li>
+            Aperte <kbd>F12</kbd> → aba <strong>Application</strong> → <strong>Cookies</strong> →
+            <code>https://accounts.google.com</code>.
+          </li>
+          <li>
+            Ache a linha <code>oauth_token</code>, copie o valor (começa com
+            <code>oauth2_4/</code>) e cole abaixo.
+          </li>
+        </ol>
+
+        <div class="aviso">
+          ⏱️ Esse código vale <strong>poucos minutos</strong> e só pode ser usado uma vez. Se der
+          erro, repita do passo 1 numa aba anônima nova.
+        </div>
+
+        <label for="oauth_token">Valor do cookie <code>oauth_token</code></label>
+        <input id="oauth_token" type="password" placeholder="oauth2_4/..." />
+
+        <div class="acoes">
+          <button id="conectar" class="primario">Conectar ao Keep</button>
+          <span class="estado" id="estado-keep"></span>
+        </div>
+      </section>
+
+      <!-- Passo 3 -->
+      <section class="passo" id="passo-proteger">
+        <h2><span class="numero">3</span> Proteger a senha <span class="opcional">opcional</span></h2>
+        <p class="ajuda">
+          Sua senha fica salva num arquivo de texto neste computador. Este botão a embaralha usando
+          um recurso do próprio sistema, de um jeito que só funciona <strong>nesta máquina</strong> —
+          se alguém copiar o arquivo, não serve para nada.
+        </p>
+        <div class="acoes">
+          <button id="proteger">Proteger a senha</button>
+          <span class="estado" id="estado-proteger"></span>
+        </div>
+      </section>
+
+      <!-- Passo 4 -->
+      <section class="passo" id="passo-sync">
+        <h2><span class="numero">4</span> Criar as notas</h2>
+        <div class="acoes">
+          <button id="buscar">Buscar meus treinos</button>
+          <select id="rotina" hidden></select>
+          <button id="sincronizar" class="primario" hidden>Criar as notas no Keep</button>
+        </div>
+        <span class="estado" id="estado-sync"></span>
+        <table id="resultado" hidden>
+          <thead>
+            <tr><th>Nota</th><th>O que aconteceu</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </main>
+
+    <footer>
+      <p id="resumo"></p>
+      <p class="fina">
+        Esta tela roda só no seu computador. Nada é enviado para nenhum servidor além do MFIT e do
+        Google. Pode fechar a janela do terminal quando terminar.
+      </p>
+    </footer>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

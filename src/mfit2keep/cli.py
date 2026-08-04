@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import threading
+import webbrowser
 from collections.abc import Coroutine
 from enum import StrEnum
 from pathlib import Path
@@ -335,6 +337,31 @@ def secrets_protect(
         "\n[yellow]Guarde a senha num gerenciador:[/] o blob depende do TPM desta placa. "
         "Reinstalar o sistema ou trocar de máquina exige redigitar."
     )
+
+
+@app.command("painel")
+def web_command(
+    port: Annotated[int, typer.Option("--porta", help="0 escolhe uma porta livre.")] = 0,
+    open_browser: Annotated[bool, typer.Option("--abrir/--nao-abrir")] = True,
+) -> None:
+    """Abre a tela de configuração no navegador, para quem não usa terminal.
+
+    Escuta só em 127.0.0.1 e exige um token sorteado na hora — outra página
+    aberta no seu navegador não consegue falar com ela.
+    """
+    from mfit2keep import web
+
+    servidor, url = web.build_server(port)
+    console.print(f"\n[bold]Painel do mfit2keep[/] em [cyan]{url}[/]")
+    console.print("[dim]Feche esta janela (Ctrl+C) quando terminar.[/]\n")
+    if open_browser:
+        threading.Timer(0.4, webbrowser.open, args=(url,)).start()
+    try:
+        servidor.serve_forever()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Painel encerrado.[/]")
+    finally:
+        servidor.server_close()
 
 
 @app.command("keep-login")
