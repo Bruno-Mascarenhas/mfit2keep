@@ -115,3 +115,71 @@ def test_structure_where_text_was_expected_is_rejected() -> None:
 
     with pytest.raises(InterchangeError, match="Esperava texto"):
         workouts_from_dict(payload)
+
+
+def test_workouts_without_id_get_distinct_ones() -> None:
+    # Num arquivo escrito à mão o campo costuma faltar. Sem id distinto, o
+    # destino trataria os cinco dias como um só e quatro sumiriam.
+    payload = {
+        "format": FORMAT_NAME,
+        "version": FORMAT_VERSION,
+        "workouts": [
+            {"name": "Peito", "exercises": [{"name": "Supino"}]},
+            {"name": "Costas", "exercises": [{"name": "Remada"}]},
+        ],
+    }
+
+    ids = [workout.id for workout in workouts_from_dict(payload)]
+
+    assert len(set(ids)) == 2
+    assert all(ids)
+
+
+def test_derived_id_is_stable_when_the_order_changes() -> None:
+    def payload(nomes: list[str]) -> dict[str, object]:
+        return {
+            "format": FORMAT_NAME,
+            "version": FORMAT_VERSION,
+            "workouts": [{"name": nome, "exercises": [{"name": "X"}]} for nome in nomes],
+        }
+
+    primeiro = {w.name: w.id for w in workouts_from_dict(payload(["Peito", "Costas"]))}
+    invertido = {w.name: w.id for w in workouts_from_dict(payload(["Costas", "Peito"]))}
+
+    # Reordenar os dias no arquivo não pode desfazer o vínculo com as notas.
+    assert primeiro == invertido
+
+
+def test_two_workouts_with_the_same_name_still_get_distinct_ids() -> None:
+    payload = {
+        "format": FORMAT_NAME,
+        "version": FORMAT_VERSION,
+        "workouts": [
+            {"name": "Perna", "exercises": [{"name": "Agachamento"}]},
+            {"name": "Perna", "exercises": [{"name": "Leg Press"}]},
+        ],
+    }
+
+    ids = [workout.id for workout in workouts_from_dict(payload)]
+
+    assert len(set(ids)) == 2
+
+
+def test_explicit_id_always_wins() -> None:
+    payload = {
+        "format": FORMAT_NAME,
+        "version": FORMAT_VERSION,
+        "workouts": [{"id": "156902750", "name": "Peito", "exercises": [{"name": "Supino"}]}],
+    }
+
+    assert workouts_from_dict(payload)[0].id == "156902750"
+
+
+def test_line_break_in_a_field_is_flattened() -> None:
+    payload = {
+        "format": FORMAT_NAME,
+        "version": FORMAT_VERSION,
+        "workouts": [{"name": "Peito", "exercises": [{"name": "Supino\nInclinado"}]}],
+    }
+
+    assert workouts_from_dict(payload)[0].exercises[0].name == "Supino Inclinado"

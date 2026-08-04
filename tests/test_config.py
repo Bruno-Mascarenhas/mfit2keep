@@ -290,3 +290,29 @@ def test_writing_a_plaintext_value_is_not_mistaken_for_a_leftover(
     config.replace_env_vars(["MFIT_PASSWORD=segredo"])
 
     assert dotenv_values(path).get("MFIT_PASSWORD") == "segredo"
+
+
+def test_new_plaintext_password_invalidates_the_encrypted_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A forma cifrada tem precedência na leitura. Sem remover a antiga, trocar
+    # a senha no painel não teria efeito nenhum — o app entraria com a velha.
+    path = write_env(tmp_path, "MFIT_PASSWORD_ENC=blob-da-senha-velha\n", monkeypatch)
+
+    config.replace_env_vars(["MFIT_PASSWORD=senha-nova"])
+
+    conteudo = dotenv_values(path)
+    assert conteudo.get("MFIT_PASSWORD") == "senha-nova"
+    assert conteudo.get("MFIT_PASSWORD_ENC") is None
+
+
+def test_encrypting_still_removes_the_plaintext(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_env(tmp_path, "MFIT_PASSWORD=texto-puro\n", monkeypatch)
+
+    config.replace_env_vars(["MFIT_PASSWORD_ENC=blob"])
+
+    conteudo = dotenv_values(path)
+    assert conteudo.get("MFIT_PASSWORD") is None
+    assert conteudo.get("MFIT_PASSWORD_ENC") == "blob"
