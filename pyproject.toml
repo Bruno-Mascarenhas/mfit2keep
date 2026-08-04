@@ -31,10 +31,6 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-[project.urls]
-Homepage = "https://github.com/Bruno-Mascarenhas/mfit2keep"
-Repository = "https://github.com/Bruno-Mascarenhas/mfit2keep"
-Issues = "https://github.com/Bruno-Mascarenhas/mfit2keep/issues"
 dependencies = [
     "httpx>=0.28.1",
     "python-dotenv>=1.1.0",
@@ -45,6 +41,11 @@ dependencies = [
     "gpsoauth>=2.0.0",
     "keyring>=25.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Bruno-Mascarenhas/mfit2keep"
+Repository = "https://github.com/Bruno-Mascarenhas/mfit2keep"
+Issues = "https://github.com/Bruno-Mascarenhas/mfit2keep/issues"
 
 [project.optional-dependencies]
 dev = [
