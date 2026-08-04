@@ -10,7 +10,7 @@
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![mypy strict](https://img.shields.io/badge/mypy-strict-2A6DB2)](https://mypy-lang.org/)
 [![uv](https://img.shields.io/badge/deps-uv-DE5FE9?logo=uv&logoColor=white)](https://docs.astral.sh/uv/)
-[![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-268%20passing-brightgreen)](tests/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -430,6 +430,7 @@ src/mfit2keep/
 ├── keep_auth.py        # master token: troca, keyring, fallback em arquivo
 ├── secrets_store.py    # cifragem nativa: systemd-creds (Linux) / DPAPI (Windows)
 ├── _dpapi.py           # DPAPI via ctypes, sem dependência extra
+├── errors.py           # o que vira mensagem e o que sobe — política única
 ├── secure_io.py        # escrita restrita e atômica + trava (fcntl/msvcrt)
 ├── web.py              # painel local: servidor da biblioteca padrão, só em 127.0.0.1
 └── cli.py              # Typer + Rich
@@ -465,7 +466,7 @@ Mapeada a partir do bundle do SPA. Autenticação é `authorization: <jwt>` — 
 ## Desenvolvimento
 
 ```bash
-pytest                            # 238 testes
+pytest                            # 268 testes
 ruff check src tests
 ruff format src tests
 mypy --platform linux             # o código tem caminho por sistema:

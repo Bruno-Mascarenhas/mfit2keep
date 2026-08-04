@@ -10,8 +10,10 @@ from typing import Any
 
 import pytest
 
-from mfit2keep import keep_auth, web
+from mfit2keep import keep_auth, secrets_store, web
 from mfit2keep.config import ConfigError
+from mfit2keep.sources.mfit import MfitSource
+from mfit2keep.sources.mfit_api import MfitError
 
 
 @pytest.fixture
@@ -220,3 +222,87 @@ def test_state_queries_the_keyring_only_once(
 
     # A tela recarrega o estado depois de cada ação; cada consulta bate no keyring.
     assert chamadas == 1
+
+
+def test_exception_group_from_the_task_group_becomes_a_message(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, token = painel
+
+    def explode(_payload: dict[str, Any]) -> dict[str, Any]:
+        # Os dias vêm de um TaskGroup: o erro chega sempre embrulhado.
+        raise ExceptionGroup("dias", [MfitError("token expirou")])
+
+    monkeypatch.setitem(web.ACTIONS, "/api/sync", explode)
+
+    status, corpo = pedir(base, "/api/sync", token, {})
+
+    assert status == 400
+    assert corpo["erro"] == "token expirou"
+
+
+def test_listing_routines_without_step_one_says_what_to_do(painel: tuple[str, str]) -> None:
+    base, token = painel
+
+    status, corpo = pedir(base, "/api/rotinas", token, {})
+
+    assert status == 400
+    assert "passo 1" in corpo["erro"]
+
+
+def test_sync_without_the_keep_token_fails_before_touching_the_network(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, token = painel
+    pedir(base, "/api/config", token, {"mfit_email": "eu@x.com", "mfit_password": "segredo"})
+
+    async def nunca(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("não deveria ter buscado os treinos na rede")
+
+    monkeypatch.setattr(MfitSource, "fetch_workouts", nunca)
+
+    status, corpo = pedir(base, "/api/sync", token, {"routine_id": "1"})
+
+    assert status == 400
+    assert "passo 2" in corpo["erro"]
+
+
+def test_changing_the_password_keeps_it_protected(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, token = painel
+    monkeypatch.setattr(secrets_store, "cipher_available", lambda: True)
+    monkeypatch.setattr(secrets_store, "encrypt", lambda _chave, valor: f"cifrado:{valor}")
+    pedir(base, "/api/config", token, {"mfit_email": "eu@x.com", "mfit_password": "velha"})
+    pedir(base, "/api/proteger", token, {})
+
+    _, corpo = pedir(base, "/api/config", token, {"mfit_password": "nova"})
+
+    # Gravar em texto puro invalida o cifrado; sem recifrar, trocar a senha
+    # desprotegeria o .env sem o usuário perceber.
+    assert corpo["senha_cifrada"] is True
+    assert "protegida" in corpo["mensagem"]
+
+
+def test_changing_the_password_warns_when_it_cannot_reprotect(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, token = painel
+    monkeypatch.setattr(secrets_store, "cipher_available", lambda: True)
+    monkeypatch.setattr(secrets_store, "encrypt", lambda _chave, valor: f"cifrado:{valor}")
+    pedir(base, "/api/config", token, {"mfit_email": "eu@x.com", "mfit_password": "velha"})
+    pedir(base, "/api/proteger", token, {})
+
+    monkeypatch.setattr(secrets_store, "cipher_available", lambda: False)
+    _, corpo = pedir(base, "/api/config", token, {"mfit_password": "nova"})
+
+    assert corpo["senha_cifrada"] is False
+    assert "texto puro" in corpo["mensagem"]
+
+
+def test_the_anonymous_window_step_does_not_offer_a_normal_link() -> None:
+    pagina = (web.frontend_dir() / "index.html").read_text(encoding="utf-8")
+
+    # Um link abriria aba normal — o contrário do que o passo manda fazer.
+    assert 'href="https://accounts.google.com/EmbeddedSetup"' not in pagina
+    assert "endereco-google" in pagina

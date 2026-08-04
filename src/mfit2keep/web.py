@@ -28,26 +28,14 @@ from typing import Any
 from mfit2keep import keep_auth, secrets_store
 from mfit2keep.config import ConfigError, env_file, load_settings, replace_env_vars
 from mfit2keep.destinations.base import NoteDestination, NoteResult
-from mfit2keep.destinations.local import LocalDestinationError, LocalMarkdownDestination
-from mfit2keep.interchange import InterchangeError
+from mfit2keep.destinations.local import LocalMarkdownDestination
+from mfit2keep.errors import EXPECTED_ERRORS, expected_from
 from mfit2keep.keep_auth import KeepAuthError
 from mfit2keep.render import routine_to_notes
 from mfit2keep.secure_io import write_secret
-from mfit2keep.sources.base import SourceError
 from mfit2keep.sources.mfit import MfitSource
-from mfit2keep.sources.mfit_api import MfitError
 
 HOST = "127.0.0.1"
-#: Erros que viram mensagem na tela em vez de 500.
-EXPECTED_ERRORS = (
-    ConfigError,
-    MfitError,
-    KeepAuthError,
-    LocalDestinationError,
-    SourceError,
-    InterchangeError,
-    secrets_store.SecretsError,
-)
 
 #: Tipo dos arquivos servidos; o resto é recusado.
 CONTENT_TYPES = {
@@ -94,10 +82,11 @@ def read_state() -> dict[str, Any]:
 
 def save_config(payload: dict[str, Any]) -> dict[str, Any]:
     """Grava o ``.env`` preservando o que o usuário não mexeu."""
+    senha_nova = str(payload.get("mfit_password") or "").strip()
     linhas: list[str] = []
     for variavel, valor in (
         ("MFIT_EMAIL", payload.get("mfit_email")),
-        ("MFIT_PASSWORD", payload.get("mfit_password")),
+        ("MFIT_PASSWORD", senha_nova),
         ("GOOGLE_EMAIL", payload.get("google_email")),
     ):
         texto = str(valor or "").strip()
@@ -107,12 +96,32 @@ def save_config(payload: dict[str, Any]) -> dict[str, Any]:
     if not linhas:
         raise ConfigError("Nada para salvar.")
 
+    # Gravar a senha em texto puro invalida a versão cifrada (é o que faz a
+    # troca de senha ter efeito). Quem já tinha protegido não pode descobrir
+    # sozinho que voltou ao texto puro.
+    estava_cifrada = bool(load_settings().password_enc)
+
     caminho = env_file()
     if not caminho.exists():
         # Primeiro uso: o arquivo nasce restrito, não vazio e frouxo.
         write_secret(caminho, "")
     replace_env_vars(linhas)
-    return read_state()
+
+    if not (senha_nova and estava_cifrada):
+        return read_state()
+    return {**_reproteger(senha_nova), **read_state()}
+
+
+def _reproteger(senha: str) -> dict[str, Any]:
+    """Recifra a senha recém-trocada, ou diz que ela ficou exposta."""
+    if not secrets_store.cipher_available():
+        return {
+            "mensagem": "Salvo. Atenção: a senha voltou a ficar em texto puro no .env — "
+            f"não há cifragem local aqui ({secrets_store.cipher_name()}).",
+        }
+    # Só a senha: cifrar todo o MANAGED mexeria também no master token.
+    replace_env_vars([f"MFIT_PASSWORD_ENC={secrets_store.encrypt('mfit_password', senha)}"])
+    return {"mensagem": "Salvo, e a senha nova já foi protegida."}
 
 
 def exchange_keep_token(payload: dict[str, Any]) -> dict[str, Any]:
@@ -153,7 +162,25 @@ def protect_secrets(_payload: dict[str, Any]) -> dict[str, Any]:
     return {"mensagem": f"{len(linhas)} segredo(s) cifrado(s).", **read_state()}
 
 
+def _exigir(passo: str, estado: dict[str, Any], chave: str) -> None:
+    """Barra a ação com a linguagem da tela, não a do terminal.
+
+    As mensagens de ``config.py`` e ``keep_auth.py`` falam de variável de
+    ambiente e de comando — certas para a CLI, inúteis para quem só viu a
+    tela. E a checagem vem antes da rede: sem ela, faltar o passo 2 só
+    aparecia depois de baixar todos os dias do treino.
+    """
+    if not estado[chave]:
+        raise ConfigError(passo)
+
+
 def list_routines(_payload: dict[str, Any]) -> dict[str, Any]:
+    _exigir(
+        "Preencha o passo 1 (e-mail e senha do MFIT) e clique em Salvar.",
+        read_state(),
+        "tem_senha",
+    )
+
     async def run() -> list[dict[str, str]]:
         async with MfitSource(load_settings()) as source:
             return [
@@ -169,6 +196,15 @@ def run_sync(payload: dict[str, Any]) -> dict[str, Any]:
     if not rotina:
         raise ConfigError("Escolha uma rotina.")
     destino = str(payload.get("destino") or "keep")
+
+    estado = read_state()
+    _exigir("Preencha o passo 1 (e-mail e senha do MFIT) e clique em Salvar.", estado, "tem_senha")
+    if destino == "keep":
+        _exigir(
+            "Faça o passo 2 (Liberar o Google Keep) antes de criar as notas.",
+            estado,
+            "tem_token_keep",
+        )
 
     async def run() -> list[NoteResult]:
         async with MfitSource(load_settings()) as source:
@@ -276,6 +312,12 @@ class Handler(BaseHTTPRequestHandler):
         except EXPECTED_ERRORS as erro:
             # Erro previsto vira mensagem na tela; o resto sobe e aparece no log.
             self._send_json(HTTPStatus.BAD_REQUEST, {"erro": str(erro)})
+        except BaseExceptionGroup as grupo:
+            # Os dias vêm de um TaskGroup: sem desembrulhar, a conexão morreria
+            # sem resposta e a tela só mostraria "erro de rede".
+            if (previsto := expected_from(grupo)) is None:
+                raise
+            self._send_json(HTTPStatus.BAD_REQUEST, {"erro": str(previsto)})
 
     def _serve_file(self, nome: str) -> None:
         caminho = (frontend_dir() / nome).resolve()

@@ -57,14 +57,26 @@ function pintarEstado(estado) {
     $("estado-keep").className = "estado ok";
   }
 
+  // Os quatro casos precisam de ramo: sem o else final, trocar a senha (que
+  // desfaz a cifragem) deixava o botão travado dizendo "protegida" em verde.
   const proteger = $("proteger");
+  const aviso = $("estado-proteger");
   if (estado.senha_cifrada) {
     proteger.disabled = true;
-    $("estado-proteger").textContent = "senha já protegida";
-    $("estado-proteger").className = "estado ok";
+    aviso.textContent = "senha já protegida";
+    aviso.className = "estado ok";
   } else if (!estado.cifragem_disponivel) {
     proteger.disabled = true;
-    $("estado-proteger").textContent = `indisponível neste sistema (${estado.cifragem_nome})`;
+    aviso.textContent = `indisponível neste sistema (${estado.cifragem_nome})`;
+    aviso.className = "estado";
+  } else if (!estado.tem_senha) {
+    proteger.disabled = true;
+    aviso.textContent = "salve a senha no passo 1 primeiro";
+    aviso.className = "estado";
+  } else {
+    proteger.disabled = false;
+    aviso.textContent = "";
+    aviso.className = "estado";
   }
 
   $("resumo").textContent = `Configuração salva em ${estado.env_file}`;
@@ -151,6 +163,21 @@ $("sincronizar").addEventListener("click", async (evento) => {
   }
   $("resultado").hidden = dados.notas.length === 0;
   $("passo-sync").classList.add("pronto");
+});
+
+$("copiar-endereco").addEventListener("click", async (evento) => {
+  const botao = evento.target;
+  const endereco = $("endereco-google").textContent.trim();
+  try {
+    await navigator.clipboard.writeText(endereco);
+    botao.textContent = "Copiado!";
+  } catch {
+    // Área de transferência pode ser negada por foco ou permissão; selecionar
+    // o texto deixa a pessoa copiar à mão, em vez de ficar sem saída.
+    getSelection()?.selectAllChildren($("endereco-google"));
+    botao.textContent = "Selecionei — copie com Ctrl+C";
+  }
+  setTimeout(() => (botao.textContent = "Copiar endereço"), 4000);
 });
 
 chamar("/api/estado")

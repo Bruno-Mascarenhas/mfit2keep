@@ -23,14 +23,13 @@ from mfit2keep.config import (
     replace_env_vars,
 )
 from mfit2keep.destinations.base import MARKER, NoteDestination, NoteResult
-from mfit2keep.destinations.local import LocalDestinationError, LocalMarkdownDestination
-from mfit2keep.interchange import InterchangeError, workouts_to_dict
-from mfit2keep.keep_auth import KeepAuthError
+from mfit2keep.destinations.local import LocalMarkdownDestination
+from mfit2keep.errors import EXPECTED_ERRORS, expected_from
+from mfit2keep.interchange import workouts_to_dict
 from mfit2keep.models import Workout
 from mfit2keep.render import RenderOptions, routine_to_notes
-from mfit2keep.sources.base import RoutineSummary, SourceError, WorkoutSource
+from mfit2keep.sources.base import RoutineSummary, WorkoutSource
 from mfit2keep.sources.mfit import MfitSource
-from mfit2keep.sources.mfit_api import MfitError
 from mfit2keep.sources.workout_file import WorkoutFileSource
 
 app = typer.Typer(
@@ -39,16 +38,6 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
-
-EXPECTED_ERRORS = (
-    ConfigError,
-    MfitError,
-    KeepAuthError,
-    LocalDestinationError,
-    SourceError,
-    InterchangeError,
-    secrets_store.SecretsError,
-)
 
 
 class Destino(StrEnum):
@@ -89,14 +78,9 @@ def _run[T](coro: Coroutine[Any, Any, T]) -> T:
     except EXPECTED_ERRORS as error:
         _fail(error)
     except BaseExceptionGroup as group:
-        # O TaskGroup que busca os dias em paralelo embrulha a exceção original;
-        # sem desembrulhar, o usuário veria um traceback de ExceptionGroup.
-        expected, unexpected = group.split(EXPECTED_ERRORS)
-        # Só trata quando o grupo INTEIRO é esperado: um bug de verdade ou um
-        # Ctrl+C viajando junto não pode ser escondido pela mensagem amigável.
-        if unexpected is not None or expected is None:
+        if (previsto := expected_from(group)) is None:
             raise
-        _fail(expected.exceptions[0])
+        _fail(previsto)
 
 
 def _print_results(results: list[NoteResult]) -> None:
