@@ -20,10 +20,14 @@ keywords = [
     "checklist",
     "fitness",
     "cli",
+    "cross-platform",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS :: MacOS X",
     "Intended Audience :: End Users/Desktop",
     "Natural Language :: Portuguese (Brazilian)",
     "Programming Language :: Python :: 3.14",
@@ -108,6 +112,11 @@ enable_error_code = [
 # A API do MFIT devolve JSON sem schema; o parser é quem impõe o formato.
 module = "mfit2keep.parser"
 disallow_any_explicit = false
+
+[[tool.mypy.overrides]]
+# Só carrega em Windows; no CI ele é checado com `mypy --platform win32`.
+module = "mfit2keep._dpapi"
+ignore_errors = true
 
 [[tool.mypy.overrides]]
 # Nenhuma das três publica py.typed, ainda que o gkeepapi seja anotado.

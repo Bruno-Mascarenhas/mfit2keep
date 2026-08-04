@@ -5,11 +5,12 @@
 **Seus treinos do [MFIT Personal](https://mfitpersonal.com.br) viram notas com checkbox no Google Keep — para você seguir a série pelo smartwatch, na academia.**
 
 [![CI](https://github.com/Bruno-Mascarenhas/mfit2keep/actions/workflows/ci.yml/badge.svg)](https://github.com/Bruno-Mascarenhas/mfit2keep/actions/workflows/ci.yml)
+[![Linux | Windows | macOS](https://img.shields.io/badge/os-linux%20%7C%20windows%20%7C%20macos-informational)](#instalação)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![mypy strict](https://img.shields.io/badge/mypy-strict-2A6DB2)](https://mypy-lang.org/)
 [![uv](https://img.shields.io/badge/deps-uv-DE5FE9?logo=uv&logoColor=white)](https://docs.astral.sh/uv/)
-[![Tests](https://img.shields.io/badge/tests-205%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-216%20passing-brightgreen)](tests/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -69,8 +70,8 @@ matching. É o mesmo `Workout` que sai pelo `exportar`, então dá para largar o
 
 ## Instalação
 
-Precisa de **Python 3.14+**. O projeto usa conda para o interpretador e [uv](https://docs.astral.sh/uv/)
-para as dependências:
+Roda em **Linux, Windows e macOS** — o CI executa a suíte nos três. Precisa de **Python 3.14+**;
+o projeto usa conda para o interpretador e [uv](https://docs.astral.sh/uv/) para as dependências:
 
 ```bash
 git clone https://github.com/Bruno-Mascarenhas/mfit2keep.git
@@ -223,8 +224,16 @@ mfit2keep segredos status              # onde cada segredo está hoje
 mfit2keep segredos proteger --escrever # cifra e reescreve o .env
 ```
 
-O `proteger` usa o [`systemd-creds`](https://www.freedesktop.org/software/systemd/man/systemd-creds.html)
-no escopo do usuário, que amarra a chave ao **TPM2 desta placa**. O `.env` fica assim:
+O `proteger` usa a cifragem nativa do seu sistema — em todos os casos a chave fica presa à
+**máquina e à conta**, então o blob é lixo em qualquer outro lugar:
+
+| Sistema | Ferramenta | Amarrado a |
+| --- | --- | --- |
+| Linux | `systemd-creds --user` | TPM2 da placa + conta |
+| Windows | DPAPI (`CryptProtectData`) | perfil do usuário + máquina |
+| macOS e outros | — | o app avisa e mantém tudo no keyring |
+
+O `.env` fica assim:
 
 ```dotenv
 MFIT_PASSWORD_ENC=70rBNnmpSA6n22iJf58WXSAAAAABAAAADAAAABAAAACUiIoXv32WLPJcrlAAAA...
@@ -239,9 +248,9 @@ funcionando em cron**. O segredo nunca passa por `argv` (visível no `ps`), só 
 > (keyring, sops, age, gpg-agent destravado) muda isso — quem tem o seu UID tem os seus segredos.
 > O ganho real é: disco roubado, backup vazado e `git add -f` acidental deixam de ser catástrofe.
 
-Como a chave depende do TPM desta placa, **guarde a senha num gerenciador**: reinstalar o sistema,
-trocar a placa ou limpar o TPM exige redigitar. Sem `systemd-creds` na máquina, o master token
-continua no keyring do sistema e o comando avisa em vez de fingir que cifrou.
+Como a chave depende da máquina, **guarde a senha num gerenciador**: reinstalar o sistema, trocar
+a placa, limpar o TPM ou recriar o perfil do Windows exige redigitar. Onde não há cifragem nativa,
+o comando avisa em vez de fingir que cifrou, e o master token segue no keyring do sistema.
 
 ## Segurança: como o app sabe o que é dele
 
@@ -298,7 +307,8 @@ src/mfit2keep/
 │   └── local.py      #   arquivos Markdown
 ├── keep_auth.py      # master token: troca, keyring, fallback em arquivo
 ├── secrets_store.py  # cifragem dos segredos com systemd-creds (TPM2)
-├── secure_io.py      # escrita 0600 atômica + trava entre processos
+├── secure_io.py      # escrita restrita e atômica + trava entre processos (fcntl/msvcrt)
+├── _dpapi.py         # DPAPI do Windows via ctypes, sem dependência extra
 └── cli.py            # Typer + Rich
 ```
 
@@ -324,7 +334,7 @@ Mapeada a partir do bundle do SPA. Autenticação é `authorization: <jwt>` — 
 ## Desenvolvimento
 
 ```bash
-pytest              # 205 testes
+pytest              # 216 testes
 ruff check src tests
 ruff format src tests
 mypy                # strict

@@ -29,6 +29,7 @@ import gpsoauth
 import keyring
 from keyring.errors import KeyringError
 
+from mfit2keep import secrets_store
 from mfit2keep.config import STATE_DIR, Settings
 from mfit2keep.secure_io import write_secret
 
@@ -147,14 +148,7 @@ def load(settings: Settings) -> KeepCredentials:
             device_id=_stable_device_id(email),
         )
 
-    payload: str | None = None
-    try:
-        if email:
-            payload = keyring.get_password(SERVICE, email)
-        if payload is None:
-            payload = keyring.get_password(SERVICE, DEFAULT_ACCOUNT)
-    except KeyringError:
-        payload = None
+    payload = _keyring_payload(email)
 
     if payload is None and TOKEN_FILE.exists():
         payload = TOKEN_FILE.read_text(encoding="utf-8")
@@ -192,6 +186,35 @@ def _reject_oauth_cookie(token: str) -> None:
             "Ele ainda precisa ser trocado: rode `mfit2keep keep-login` e cole o cookie lá. "
             "Lembre que o cookie é de uso único e expira em poucos minutos."
         )
+
+
+def stored_backend(settings: Settings) -> secrets_store.Backend:
+    """Onde o master token está guardado, sem carregá-lo.
+
+    O ``keep-login`` grava no keyring e nunca no ``.env``, então olhar só o
+    ``.env`` faria o `segredos status` dizer "ausente" justamente no caminho
+    recomendado pelo README.
+    """
+    if settings.google_master_token_enc:
+        return secrets_store.Backend.ENCRYPTED
+    if settings.google_master_token:
+        return secrets_store.Backend.PLAINTEXT
+
+    if _keyring_payload(settings.google_email) is not None:
+        return secrets_store.Backend.KEYRING
+    if TOKEN_FILE.exists():
+        # Arquivo de fallback é texto puro — precisa aparecer como tal.
+        return secrets_store.Backend.PLAINTEXT
+    return secrets_store.Backend.ABSENT
+
+
+def _keyring_payload(email: str | None) -> str | None:
+    try:
+        if email and (payload := keyring.get_password(SERVICE, email)):
+            return payload
+        return keyring.get_password(SERVICE, DEFAULT_ACCOUNT)
+    except KeyringError:
+        return None
 
 
 def forget(email: str) -> None:

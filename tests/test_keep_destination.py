@@ -6,12 +6,14 @@ de ordem dos exercícios aparece aqui. Só ``authenticate``/``sync``/``dump``
 são substituídos.
 """
 
+import json
 from pathlib import Path
 from typing import Any
 
 import gkeepapi
 import pytest
 
+from mfit2keep import secure_io
 from mfit2keep.destinations import keep as keep_module
 from mfit2keep.destinations.base import MARKER, Action
 from mfit2keep.destinations.keep import KeepDestination
@@ -385,3 +387,37 @@ async def test_duplicate_exercises_do_not_share_one_mark(credentials: KeepCreden
     await destination.upsert_all([note("Rosca — 3x12", "Rosca — 1x20", "Tríceps — 3x12")])
 
     assert [i.checked for i in nossa.items] == [True, False, False]
+
+
+async def test_note_map_survives_a_failure_writing_the_state_cache(
+    credentials: KeepCredentials, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = OfflineKeep()
+    real_write = secure_io.write_secret_json
+
+    def fail_on_state_cache(path: Path, data: dict[str, Any]) -> None:
+        if path == keep_module.STATE_CACHE:
+            raise OSError("disco cheio")
+        real_write(path, data)
+
+    monkeypatch.setattr(keep_module, "write_secret_json", fail_on_state_cache)
+
+    await KeepDestination(credentials, client=client).upsert_all([note("1. Supino")])
+
+    # Sem o vínculo gravado, a execução seguinte duplicaria a nota no Keep.
+    saved = json.loads(keep_module.NOTE_MAP.read_text(encoding="utf-8"))
+    assert saved == {"mfit:1": next(iter(client.all())).id}
+
+
+async def test_upsert_after_purge_records_the_new_link(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all([note("1. Supino")])
+    await destination.purge()
+
+    await destination.upsert_all([note("1. Supino")])
+
+    # `_forgotten` não pode continuar valendo e apagar o vínculo recém-criado.
+    saved = json.loads(keep_module.NOTE_MAP.read_text(encoding="utf-8"))
+    alive = next(node for node in client.all() if not node.trashed)
+    assert saved == {"mfit:1": alive.id}

@@ -15,6 +15,7 @@ from mfit2keep import keep_auth, secrets_store
 from mfit2keep.config import (
     PROJECT_ROOT,
     ConfigError,
+    Settings,
     env_file,
     load_settings,
     replace_env_vars,
@@ -252,6 +253,14 @@ segredos = typer.Typer(help="Tira os segredos do texto puro, cifrando com o TPM 
 app.add_typer(segredos, name="segredos")
 
 
+def _backend_of(settings: Settings, secret: secrets_store.ManagedSecret) -> secrets_store.Backend:
+    """Onde o segredo está — o master token também mora no keyring."""
+    if secret.env_var == "GOOGLE_MASTER_TOKEN":
+        return keep_auth.stored_backend(settings)
+    plaintext, encrypted = settings.secret_pair(secret.env_var)
+    return secrets_store.backend_of(plaintext=plaintext, encrypted=encrypted)
+
+
 @segredos.command("status")
 def secrets_status() -> None:
     """Mostra onde cada segredo está guardado hoje."""
@@ -260,15 +269,14 @@ def secrets_status() -> None:
     table = Table("Segredo", "Onde está", title=f"Segredos em {env_file()}")
     exposed = False
     for secret in secrets_store.MANAGED:
-        plaintext, encrypted = settings.secret_pair(secret.env_var)
-        backend = secrets_store.backend_of(plaintext=plaintext, encrypted=encrypted)
+        backend = _backend_of(settings, secret)
         exposed = exposed or backend is secrets_store.Backend.PLAINTEXT
         color = "red" if backend is secrets_store.Backend.PLAINTEXT else "green"
         table.add_row(secret.label, f"[{color}]{backend}[/]")
     console.print(table)
 
-    if not secrets_store.systemd_creds_available():
-        console.print("[yellow]systemd-creds indisponível nesta máquina.[/]")
+    if not secrets_store.cipher_available():
+        console.print(f"[yellow]Sem cifragem local aqui: {secrets_store.cipher_name()}.[/]")
     elif exposed:
         console.print("Rode [bold]mfit2keep segredos proteger[/] para cifrar o que está exposto.")
     else:
@@ -281,16 +289,16 @@ def secrets_protect(
         bool, typer.Option("--escrever/--mostrar", help="Reescreve o .env ou só imprime.")
     ] = False,
 ) -> None:
-    """Cifra os segredos do .env com o TPM2 desta máquina.
+    """Cifra os segredos do .env com a cifragem nativa deste sistema.
 
     O blob resultante só decifra aqui: cópia de backup, disco roubado ou SSD
     devolvido em RMA não servem para nada.
     """
-    if not secrets_store.systemd_creds_available():
+    if not secrets_store.cipher_available():
         _fail(
             ConfigError(
-                "systemd-creds não está disponível para o seu usuário. "
-                "Sem ele, o master token continua no keyring e a senha, no .env."
+                f"Sem cifragem local disponível ({secrets_store.cipher_name()}). "
+                "O master token continua no keyring e a senha, no .env."
             )
         )
 

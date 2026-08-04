@@ -15,6 +15,7 @@ Três particularidades moldam este arquivo:
 """
 
 import asyncio
+import contextlib
 import random
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -208,8 +209,14 @@ class KeepDestination(NoteDestination):
         # O sync vem primeiro: se ele falhar, o mapa não pode registrar um
         # vínculo para uma nota que nunca chegou ao Keep.
         self._client.sync()
-        write_secret_json(STATE_CACHE, self._client.dump())
+
+        # O mapa é insubstituível — perdê-lo faz a execução seguinte criar
+        # notas duplicadas. O cache de estado tem centenas de KB e é o que
+        # estoura primeiro com disco cheio, então vai depois e é best-effort:
+        # ele se regenera sozinho no próximo authenticate.
         self._persist_note_map()
+        with contextlib.suppress(OSError):
+            write_secret_json(STATE_CACHE, self._client.dump())
 
     def _persist_note_map(self) -> None:
         """Funde com o que estiver em disco, sob trava entre processos.
@@ -225,6 +232,9 @@ class KeepDestination(NoteDestination):
                 merged.pop(external_id, None)
             write_secret_json(NOTE_MAP, merged)
             self._note_ids = merged
+            # Só depois de gravar: falha de escrita não pode perder o registro
+            # de que estas notas foram removidas.
+            self._forgotten.clear()
 
 
 def _rewrite_items(node: KeepList, title: str, wanted: list[str]) -> None:

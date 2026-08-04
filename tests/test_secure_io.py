@@ -1,10 +1,14 @@
+import asyncio
 import os
+import sys
 from pathlib import Path
 
 import pytest
 
+from mfit2keep import secure_io
 from mfit2keep.secure_io import (
     ensure_private_dir,
+    exclusive_lock,
     is_world_readable,
     read_secret_json,
     write_secret,
@@ -103,3 +107,58 @@ def test_write_is_atomic_on_failure(tmp_path: Path) -> None:
     # O arquivo anterior continua íntegro e nenhum .tmp sobra.
     assert path.read_text(encoding="utf-8") == "conteudo bom"
     assert [p.name for p in tmp_path.iterdir()] == ["token.json"]
+
+
+async def test_lock_serializes_two_processes(tmp_path: Path) -> None:
+    """A trava é entre processos — subprocesso de verdade, não thread."""
+    alvo = tmp_path / "estado.json"
+    script = tmp_path / "escreve.py"
+    script.write_text(
+        "import sys, time\n"
+        "from pathlib import Path\n"
+        "from mfit2keep.secure_io import exclusive_lock\n"
+        "alvo = Path(sys.argv[1])\n"
+        "with exclusive_lock(alvo):\n"
+        "    atual = alvo.read_text() if alvo.exists() else ''\n"
+        "    time.sleep(0.2)\n"
+        "    alvo.write_text(atual + sys.argv[2])\n",
+        encoding="utf-8",
+    )
+
+    processos = [
+        await asyncio.create_subprocess_exec(sys.executable, str(script), str(alvo), letra)
+        for letra in ("a", "b")
+    ]
+    for processo in processos:
+        assert await processo.wait() == 0
+
+    # Sem a trava, o segundo leria antes do primeiro gravar e sobrescreveria.
+    assert sorted(alvo.read_text(encoding="utf-8")) == ["a", "b"]
+
+
+def test_lock_is_reentrant_across_calls(tmp_path: Path) -> None:
+    alvo = tmp_path / "estado.json"
+
+    with exclusive_lock(alvo):
+        pass
+    with exclusive_lock(alvo):
+        pass  # travar de novo depois de soltar tem que funcionar
+
+
+@pytest.mark.skipif(not secure_io.POSIX, reason="modo POSIX não existe no Windows")
+def test_posix_reports_world_readable(tmp_path: Path) -> None:
+    frouxo = tmp_path / "frouxo.json"
+    frouxo.write_text("{}", encoding="utf-8")
+    frouxo.chmod(0o644)
+
+    assert is_world_readable(frouxo)
+
+
+@pytest.mark.skipif(secure_io.POSIX, reason="só o Windows não inspeciona ACL")
+def test_windows_does_not_claim_to_know_the_acl(tmp_path: Path) -> None:
+    alvo = tmp_path / "token.json"
+    write_secret(alvo, "segredo")
+
+    # Responder False sem olhar a ACL seria dar garantia não verificada;
+    # o contrato é justamente não afirmar nada ali.
+    assert is_world_readable(alvo) is False

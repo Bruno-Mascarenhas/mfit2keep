@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import pytest
+from dotenv import dotenv_values
 
 from mfit2keep import config
 from mfit2keep.config import ConfigError, Settings, env_file, load_settings, state_dir
@@ -188,3 +189,48 @@ def test_writing_the_env_does_not_tighten_an_existing_directory(
 
     # Apertar a raiz do repositório para 0700 é efeito colateral, não segurança.
     assert projeto.stat().st_mode & 0o777 == 0o755
+
+
+def test_replace_env_vars_removes_an_export_with_tab(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # O dotenv aceita `export\tNOME=`; um removeprefix("export ") não pegaria.
+    path = write_env(tmp_path, "export\tMFIT_PASSWORD=segredo\n", monkeypatch)
+
+    config.replace_env_vars(["MFIT_PASSWORD_ENC=blob"])
+
+    assert dotenv_values(path).get("MFIT_PASSWORD") is None
+
+
+def test_variable_that_merely_starts_with_export_survives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_env(tmp_path, "exportD=4\nMFIT_PASSWORD=segredo\n", monkeypatch)
+
+    config.replace_env_vars(["MFIT_PASSWORD_ENC=blob"])
+
+    assert dotenv_values(path).get("exportD") == "4"
+
+
+def test_multiline_secret_is_removed_whole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Descartar só a primeira linha deixaria a cauda do segredo no arquivo.
+    path = write_env(
+        tmp_path, 'MFIT_EMAIL=eu@x.com\nMFIT_PASSWORD="primeira\nsegunda"\n', monkeypatch
+    )
+
+    config.replace_env_vars(["MFIT_PASSWORD_ENC=blob"])
+
+    content = path.read_text(encoding="utf-8")
+    assert "primeira" not in content
+    assert "segunda" not in content
+    assert "MFIT_EMAIL=eu@x.com" in content
+
+
+def test_quoted_single_line_value_does_not_swallow_the_next_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_env(tmp_path, 'MFIT_PASSWORD="segredo"\nMFIT_EMAIL=eu@x.com\n', monkeypatch)
+
+    config.replace_env_vars(["MFIT_PASSWORD_ENC=blob"])
+
+    assert dotenv_values(path).get("MFIT_EMAIL") == "eu@x.com"

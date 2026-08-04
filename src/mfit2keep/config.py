@@ -1,6 +1,8 @@
 """Configuração lida do ambiente / arquivo .env."""
 
 import os
+import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,6 +10,11 @@ from dotenv import dotenv_values
 
 from mfit2keep import secrets_store
 from mfit2keep.secure_io import write_secret
+
+#: Mesma gramática que o python-dotenv aceita: `NOME=`, com indentação e
+#: `export` opcionais. O `\s+` obrigatório preserva `exportD=4` como variável
+#: própria, em vez de confundi-la com um `export`.
+_ASSIGNMENT = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 #: Repositório clonado (instalação editável): o .env e o .state ficam ao lado do código.
@@ -19,8 +26,23 @@ class ConfigError(RuntimeError):
     """Falta configuração obrigatória."""
 
 
-def _xdg(variable: str, default: str) -> Path:
-    return Path(os.getenv(variable) or default).expanduser() / "mfit2keep"
+def _user_dir(kind: str) -> Path:
+    """Diretório do app no lugar que cada sistema considera correto.
+
+    Windows não tem XDG: config vai em ``%APPDATA%`` (que sincroniza com o
+    perfil) e estado em ``%LOCALAPPDATA%`` (que não sincroniza — token de
+    máquina não deve viajar). macOS usa ``Application Support``.
+    """
+    if sys.platform == "win32":
+        variable = "APPDATA" if kind == "config" else "LOCALAPPDATA"
+        base = os.getenv(variable) or "~/AppData/Roaming"
+    elif sys.platform == "darwin":
+        base = "~/Library/Application Support"
+    else:
+        variable = "XDG_CONFIG_HOME" if kind == "config" else "XDG_STATE_HOME"
+        default = "~/.config" if kind == "config" else "~/.local/state"
+        base = os.getenv(variable) or default
+    return Path(base).expanduser() / "mfit2keep"
 
 
 def state_dir() -> Path:
@@ -40,7 +62,7 @@ def state_dir() -> Path:
         return legacy
     if _IN_REPO:
         return legacy
-    return _xdg("XDG_STATE_HOME", "~/.local/state")
+    return _user_dir("state")
 
 
 def env_file() -> Path:
@@ -48,7 +70,7 @@ def env_file() -> Path:
         return Path(override).expanduser()
     if _IN_REPO:
         return PACKAGE_ROOT / ".env"
-    return _xdg("XDG_CONFIG_HOME", "~/.config") / ".env"
+    return _user_dir("config") / ".env"
 
 
 #: Mantido por compatibilidade com quem importa o módulo.
@@ -115,25 +137,72 @@ def replace_env_vars(new_lines: list[str]) -> Path:
     obsolete = replaced | {name.removesuffix("_ENC") for name in replaced}
 
     previous = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    kept = [line for line in previous if _env_var_of(line) not in obsolete]
+    kept = _lines_to_keep(previous, obsolete)
 
     write_secret(path, "\n".join([*kept, *new_lines]) + "\n")
+    _assert_plaintext_is_gone(path, obsolete)
     return path
+
+
+def _lines_to_keep(previous: list[str], obsolete: set[str]) -> list[str]:
+    """Filtra as linhas, tratando valor entre aspas que ocupa mais de uma linha.
+
+    Descartar só a primeira linha deixaria a cauda do segredo no arquivo — meio
+    master token em texto puro, exatamente o que o comando promete remover.
+    """
+    kept: list[str] = []
+    closing_quote: str | None = None
+
+    for line in previous:
+        if closing_quote is not None:
+            # Ainda dentro do valor multilinha que está sendo removido.
+            if closing_quote in line:
+                closing_quote = None
+            continue
+        if _env_var_of(line) in obsolete:
+            closing_quote = _unclosed_quote(line)
+            continue
+        kept.append(line)
+    return kept
+
+
+def _unclosed_quote(line: str) -> str | None:
+    """Aspa que abre o valor e não fecha na mesma linha, se houver."""
+    value = line.split("=", 1)[1].lstrip() if "=" in line else ""
+    for quote in ('"', "'"):
+        if value.startswith(quote) and value.count(quote) < 2:
+            return quote
+    return None
 
 
 def _env_var_of(line: str) -> str | None:
     """Nome da variável definida na linha, ou ``None`` se ela não define nada.
 
     Comentário e linha em branco devolvem ``None`` e por isso sobrevivem. O
-    ``export`` é reconhecido porque, sem isso, um ``export MFIT_PASSWORD=...``
-    ficaria no arquivo depois de cifrar — o segredo em texto puro justamente
+    ``export`` precisa ser reconhecido: sem isso um ``export MFIT_PASSWORD=...``
+    ficava no arquivo depois de cifrar — o segredo em texto puro justamente
     onde o usuário achou que tinha saído.
     """
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#") or "=" not in stripped:
-        return None
-    name = stripped.split("=", 1)[0].strip()
-    return name.removeprefix("export ").strip() or None
+    match = _ASSIGNMENT.match(line)
+    return match.group(1) if match else None
+
+
+def _assert_plaintext_is_gone(path: Path, obsolete: set[str]) -> None:
+    """Confere a promessa com o mesmo parser que o app usa para ler.
+
+    A filtragem é linha a linha e o formato do dotenv não é: valor entre aspas
+    ocupando duas linhas, por exemplo, deixaria metade do segredo para trás. Em
+    vez de confiar na reescrita, relemos e falamos a verdade ao usuário.
+    """
+    remaining = dotenv_values(path)
+    leftover = sorted(
+        name for name in obsolete if not name.endswith("_ENC") and remaining.get(name)
+    )
+    if leftover:
+        raise ConfigError(
+            f"Não consegui remover de {path}: {', '.join(leftover)}. "
+            "Apague essas linhas à mão — o segredo ainda está em texto puro."
+        )
 
 
 def load_settings() -> Settings:

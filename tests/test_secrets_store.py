@@ -1,4 +1,5 @@
 import subprocess
+import sys
 
 import pytest
 
@@ -6,8 +7,8 @@ from mfit2keep import secrets_store
 from mfit2keep.secrets_store import Backend, SecretsError, backend_of, credential_name, resolve
 
 requires_systemd_creds = pytest.mark.skipif(
-    not secrets_store.systemd_creds_available(),
-    reason="systemd-creds indisponível (precisa de systemd com escopo de usuário)",
+    not secrets_store.cipher_available(),
+    reason="sem cifragem local nesta máquina",
 )
 
 
@@ -20,7 +21,7 @@ def test_backend_reports_plaintext() -> None:
 
 
 def test_backend_reports_encrypted() -> None:
-    assert backend_of(plaintext=None, encrypted="blob") is Backend.SYSTEMD_CREDS
+    assert backend_of(plaintext=None, encrypted="blob") is Backend.ENCRYPTED
 
 
 def test_backend_reports_absent() -> None:
@@ -29,7 +30,7 @@ def test_backend_reports_absent() -> None:
 
 def test_encrypted_wins_over_plaintext_in_the_backend_report() -> None:
     # Deixar a variável antiga preenchida por engano não pode "rebaixar" o status.
-    assert backend_of(plaintext="senha", encrypted="blob") is Backend.SYSTEMD_CREDS
+    assert backend_of(plaintext="senha", encrypted="blob") is Backend.ENCRYPTED
 
 
 def test_resolve_returns_plaintext_when_there_is_no_blob() -> None:
@@ -46,6 +47,23 @@ def test_resolve_prefers_the_blob(monkeypatch: pytest.MonkeyPatch) -> None:
     assert resolve("mfit_password", plaintext="do-texto-puro", encrypted="blob") == "do-blob"
 
 
+def test_backend_matches_the_operating_system() -> None:
+    esperado = {
+        "linux": secrets_store.SystemdCredsBackend,
+        "win32": secrets_store.DpapiBackend,
+    }.get(sys.platform, secrets_store.UnavailableBackend)
+
+    assert isinstance(secrets_store.backend, esperado)
+
+
+def test_unsupported_system_explains_the_alternative() -> None:
+    backend = secrets_store.UnavailableBackend()
+
+    assert not backend.available()
+    with pytest.raises(SecretsError, match="keyring"):
+        backend.encrypt("mfit_password", "senha")
+
+
 def test_secret_never_goes_through_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
@@ -56,7 +74,7 @@ def test_secret_never_goes_through_argv(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    secrets_store.encrypt("mfit_password", "minha-senha")
+    secrets_store.SystemdCredsBackend().encrypt("mfit_password", "minha-senha")
 
     # argv é visível para qualquer usuário via ps; o segredo tem que ir por stdin.
     assert "minha-senha" not in " ".join(captured["command"])  # type: ignore[arg-type]
@@ -70,7 +88,7 @@ def test_failure_message_does_not_include_the_secret(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     with pytest.raises(SecretsError, match="Name doesn't match") as info:
-        secrets_store.encrypt("mfit_password", "minha-senha")
+        secrets_store.SystemdCredsBackend().encrypt("mfit_password", "minha-senha")
 
     assert "minha-senha" not in str(info.value)
 
@@ -82,7 +100,7 @@ def test_missing_binary_becomes_a_clear_error(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(subprocess, "run", explode)
 
     with pytest.raises(SecretsError, match="Não foi possível cifrar"):
-        secrets_store.encrypt("mfit_password", "senha")
+        secrets_store.SystemdCredsBackend().encrypt("mfit_password", "senha")
 
 
 @requires_systemd_creds

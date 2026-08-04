@@ -1,27 +1,32 @@
-"""Escrita de arquivos que contêm segredo.
+"""Escrita de arquivos que contêm segredo, em qualquer sistema.
 
 O padrão ingênuo — ``path.write_text(...)`` seguido de ``path.chmod(0o600)`` —
-cria o arquivo com a permissão do umask (0664 nesta máquina) e só depois
-restringe. Entre as duas chamadas existe uma janela em que qualquer usuário
-local lê o master token do Google ou o JWT do MFIT.
+cria o arquivo com a permissão do umask e só depois restringe. Entre as duas
+chamadas existe uma janela em que qualquer usuário local lê o master token.
+Aqui o arquivo já nasce restrito, via ``os.open`` com o modo no próprio open, e
+a troca é atômica (escreve em temporário no mesmo diretório e faz ``replace``).
 
-Aqui o arquivo já nasce 0600, via ``os.open`` com o modo no próprio ``open``, e
-a troca é atômica (escreve em temporário no mesmo diretório e faz ``rename``),
-para que uma falha no meio não deixe um arquivo truncado.
+Diferença entre sistemas, dita na cara: no POSIX o modo ``0600`` é a proteção.
+No Windows ele é praticamente decorativo — quem protege ali é a ACL herdada do
+perfil do usuário, e é por isso que o Windows ganha o DPAPI em
+:mod:`mfit2keep.secrets_store`. A trava entre processos também muda de API
+(``fcntl`` no POSIX, ``msvcrt`` no Windows), mas a semântica é a mesma.
 """
 
-import fcntl
 import json
 import os
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-#: Só o dono lê e escreve.
+#: Só o dono lê e escreve. Sem efeito prático no Windows.
 SECRET_MODE = 0o600
 #: Só o dono entra no diretório.
 SECRET_DIR_MODE = 0o700
+
+POSIX = os.name == "posix"
 
 
 def ensure_private_dir(path: Path) -> None:
@@ -32,7 +37,7 @@ def ensure_private_dir(path: Path) -> None:
     ``.env`` — é efeito colateral, não segurança.
     """
     path.mkdir(parents=True, exist_ok=True, mode=SECRET_DIR_MODE)
-    if path.stat().st_mode & 0o077:
+    if POSIX and path.stat().st_mode & 0o077:
         path.chmod(SECRET_DIR_MODE)
 
 
@@ -40,7 +45,7 @@ def write_secret(path: Path, content: str) -> None:
     """Grava ``content`` em ``path`` sem nunca expor o conteúdo a terceiros.
 
     Cria o diretório pai se faltar, mas **não mexe na permissão de um diretório
-    que já existe**: o arquivo nasce 0600, e isso é o que protege o segredo.
+    que já existe**: o arquivo nasce restrito, e isso é o que protege o segredo.
     """
     if not path.parent.exists():
         path.parent.mkdir(parents=True, mode=SECRET_DIR_MODE)
@@ -54,7 +59,8 @@ def write_secret(path: Path, content: str) -> None:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        tmp.replace(path)
+        # os.replace é atômico nos dois sistemas, inclusive sobre arquivo existente.
+        os.replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -76,7 +82,14 @@ def read_secret_json(path: Path) -> dict[str, Any] | None:
 
 
 def is_world_readable(path: Path) -> bool:
-    """Alguém além do dono consegue ler este arquivo?"""
+    """Alguém além do dono consegue ler este arquivo?
+
+    Só responde no POSIX. No Windows a resposta viria da ACL, que este projeto
+    não inspeciona — e responder ``False`` ali seria dar uma garantia que não
+    foi verificada.
+    """
+    if not POSIX:
+        return False
     try:
         return bool(path.stat().st_mode & 0o077)
     except OSError:
@@ -93,10 +106,46 @@ def exclusive_lock(path: Path) -> Iterator[None]:
     """
     ensure_private_dir(path.parent)
     lock = path.with_suffix(f"{path.suffix}.lock")
-    descriptor = os.open(lock, os.O_WRONLY | os.O_CREAT, SECRET_MODE)
+    descriptor = os.open(lock, os.O_RDWR | os.O_CREAT, SECRET_MODE)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        _lock(descriptor)
         yield
     finally:
+        try:
+            _unlock(descriptor)
+        finally:
+            os.close(descriptor)
+
+
+# O teste é sobre sys.platform, e não sobre a constante POSIX, porque é assim
+# que o mypy estreita o tipo e consegue checar cada sistema separadamente.
+if sys.platform == "win32":  # pragma: no cover - exercitado no runner Windows do CI
+    import msvcrt
+
+    #: O msvcrt trava por faixa de bytes; um byte basta para servir de mutex.
+    _LOCK_BYTES = 1
+
+    def _lock(descriptor: int) -> None:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        # LK_LOCK tenta 10 vezes, com 1s de intervalo, e só então falha.
+        msvcrt.locking(descriptor, msvcrt.LK_LOCK, _LOCK_BYTES)
+
+    def _unlock(descriptor: int) -> None:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, _LOCK_BYTES)
+
+else:
+    import fcntl
+
+    def _lock(descriptor: int) -> None:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+
+    def _unlock(descriptor: int) -> None:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
+
+
+def platform_summary() -> str:
+    """Uma linha sobre como os segredos ficam protegidos neste sistema."""
+    if POSIX:
+        return "arquivos 0600 e trava via fcntl"
+    return f"ACL do perfil do usuário e trava via msvcrt ({sys.platform})"
