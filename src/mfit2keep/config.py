@@ -6,7 +6,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-from . import secrets_store
+from mfit2keep import secrets_store
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 #: Repositório clonado (instalação editável): o .env e o .state ficam ao lado do código.

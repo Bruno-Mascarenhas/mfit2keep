@@ -10,16 +10,16 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import keep_auth, secrets_store
-from .config import PROJECT_ROOT, ConfigError, env_file, load_settings
-from .destinations.base import MARKER, NoteDestination, NoteResult
-from .destinations.local import LocalDestinationError, LocalMarkdownDestination
-from .keep_auth import KeepAuthError
-from .mfit import MfitClient, MfitError
-from .models import Workout
-from .render import RenderOptions
-from .secure_io import write_secret
-from .sync import build_notes, fetch_workouts, list_routines
+from mfit2keep import keep_auth, secrets_store
+from mfit2keep.config import PROJECT_ROOT, ConfigError, env_file, load_settings
+from mfit2keep.destinations.base import MARKER, NoteDestination, NoteResult
+from mfit2keep.destinations.local import LocalDestinationError, LocalMarkdownDestination
+from mfit2keep.keep_auth import KeepAuthError
+from mfit2keep.mfit import MfitClient, MfitError
+from mfit2keep.models import Workout
+from mfit2keep.render import RenderOptions
+from mfit2keep.secure_io import write_secret
+from mfit2keep.sync import build_notes, fetch_workouts, list_routines
 
 app = typer.Typer(
     add_completion=False,
@@ -71,7 +71,7 @@ def _options(numbered: bool, rest: bool, load: bool, width: int) -> RenderOption
 
 def _destination(destino: Destino, out_dir: Path) -> NoteDestination:
     if destino is Destino.KEEP:
-        from .destinations.keep import KeepDestination
+        from mfit2keep.destinations.keep import KeepDestination
 
         return KeepDestination(keep_auth.load(load_settings()))
     return LocalMarkdownDestination(out_dir)

@@ -19,8 +19,8 @@ from typing import Any, Self
 
 import httpx
 
-from .config import STATE_DIR, Settings
-from .secure_io import read_secret_json, write_secret_json
+from mfit2keep.config import STATE_DIR, Settings
+from mfit2keep.secure_io import read_secret_json, write_secret_json
 
 type Json = Any
 

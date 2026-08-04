@@ -3,8 +3,7 @@ from typing import Any
 import pytest
 
 from mfit2keep.parser import day_letter, parse_routine, parse_session
-
-from .conftest import exercise, group, serie
+from tests.conftest import exercise, group, serie
 
 
 def test_day_letter_maps_dia_tipo_to_alphabet() -> None:

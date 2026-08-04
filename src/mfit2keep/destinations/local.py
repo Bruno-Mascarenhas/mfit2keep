@@ -9,9 +9,9 @@ import hashlib
 import re
 from pathlib import Path
 
-from ..matching import CheckedState
-from ..models import ChecklistNote
-from .base import MARKER, Action, NoteDestination, NoteResult
+from mfit2keep.destinations.base import MARKER, Action, NoteDestination, NoteResult
+from mfit2keep.matching import CheckedState
+from mfit2keep.models import ChecklistNote
 
 _SLUG_STRIP = re.compile(r"[^\w\s-]", re.UNICODE)
 _SLUG_SPACES = re.compile(r"[\s_-]+")

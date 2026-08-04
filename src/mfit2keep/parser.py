@@ -18,7 +18,7 @@ de série combinada (bi-set, tri-set).
 
 from typing import Any
 
-from .models import Exercise, Workout
+from mfit2keep.models import Exercise, Workout
 
 #: ``carga`` vem como "0" quando o professor não prescreveu peso.
 _EMPTY_LOAD = {"", "0", "0.0", "-"}

@@ -21,12 +21,12 @@ from typing import Any, Protocol
 import gkeepapi
 from gkeepapi.node import List as KeepList
 
-from ..config import STATE_DIR
-from ..keep_auth import KeepCredentials
-from ..matching import CheckedState
-from ..models import ChecklistNote
-from ..secure_io import exclusive_lock, read_secret_json, write_secret_json
-from .base import MARKER, Action, NoteDestination, NoteResult
+from mfit2keep.config import STATE_DIR
+from mfit2keep.destinations.base import MARKER, Action, NoteDestination, NoteResult
+from mfit2keep.keep_auth import KeepCredentials
+from mfit2keep.matching import CheckedState
+from mfit2keep.models import ChecklistNote
+from mfit2keep.secure_io import exclusive_lock, read_secret_json, write_secret_json
 
 NOTE_MAP = STATE_DIR / "keep_notes.json"
 STATE_CACHE = STATE_DIR / "keep_state.json"

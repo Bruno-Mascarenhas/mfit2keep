@@ -29,8 +29,8 @@ import gpsoauth
 import keyring
 from keyring.errors import KeyringError
 
-from .config import STATE_DIR, Settings
-from .secure_io import write_secret
+from mfit2keep.config import STATE_DIR, Settings
+from mfit2keep.secure_io import write_secret
 
 SERVICE = "mfit2keep"
 #: Chave de fallback no keyring, para quando a conta não está no .env.

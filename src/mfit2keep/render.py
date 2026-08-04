@@ -6,7 +6,7 @@ primeiro (é o que aparece quando o texto é truncado).
 
 from dataclasses import dataclass
 
-from .models import ChecklistItem, ChecklistNote, Exercise, Workout
+from mfit2keep.models import ChecklistItem, ChecklistNote, Exercise, Workout
 
 
 @dataclass(frozen=True)

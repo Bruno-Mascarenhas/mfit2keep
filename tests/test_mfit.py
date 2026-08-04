@@ -10,8 +10,7 @@ from mfit2keep import mfit
 from mfit2keep.config import ConfigError, Settings
 from mfit2keep.mfit import BASE_URL, MfitClient, MfitError
 from mfit2keep.sync import fetch_workouts
-
-from .conftest import exercise, group
+from tests.conftest import exercise, group
 
 
 @pytest.fixture(autouse=True)
