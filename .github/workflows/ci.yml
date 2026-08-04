@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Push seguido de push na mesma branch cancela a execução anterior.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  qualidade:
+    name: Lint, tipos e testes
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Versão exata: o setup-uv não publica tag móvel `v9`, só `v9.0.0`.
+      # O Dependabot cuida de subir isso mensalmente.
+      - name: Instalar uv e Python 3.14
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - name: Criar o ambiente
+        run: uv venv --python 3.14
+
+      - name: Instalar dependências
+        run: uv pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: uv run ruff check src tests
+
+      - name: Formatação (ruff)
+        run: uv run ruff format --check src tests
+
+      - name: Tipos (mypy strict)
+        run: uv run mypy
+
+      # Os testes de systemd-creds se auto-pulam onde o binário não existe,
+      # que é o caso do runner do GitHub.
+      - name: Testes (pytest)
+        run: uv run pytest
