@@ -4,6 +4,7 @@
 
 **Seus treinos do [MFIT Personal](https://mfitpersonal.com.br) viram notas com checkbox no Google Keep — para você seguir a série pelo smartwatch, na academia.**
 
+[![CI](https://github.com/Bruno-Mascarenhas/mfit2keep/actions/workflows/ci.yml/badge.svg)](https://github.com/Bruno-Mascarenhas/mfit2keep/actions/workflows/ci.yml)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![mypy strict](https://img.shields.io/badge/mypy-strict-2A6DB2)](https://mypy-lang.org/)
