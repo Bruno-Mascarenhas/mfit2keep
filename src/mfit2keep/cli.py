@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Coroutine
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 import typer
 from rich.console import Console
@@ -13,7 +13,7 @@ from rich.table import Table
 from . import keep_auth
 from .config import PROJECT_ROOT, ConfigError, load_settings
 from .destinations.base import MARKER, NoteDestination, NoteResult
-from .destinations.local import LocalMarkdownDestination
+from .destinations.local import LocalDestinationError, LocalMarkdownDestination
 from .keep_auth import KeepAuthError
 from .mfit import MfitClient, MfitError
 from .models import Workout
@@ -27,7 +27,7 @@ app = typer.Typer(
 )
 console = Console()
 
-EXPECTED_ERRORS = (ConfigError, MfitError, KeepAuthError)
+EXPECTED_ERRORS = (ConfigError, MfitError, KeepAuthError, LocalDestinationError)
 
 
 class Destino(StrEnum):
@@ -42,13 +42,24 @@ Load = Annotated[bool, typer.Option("--carga/--sem-carga")]
 Width = Annotated[int, typer.Option("--largura", help="Corta a linha; 0 = sem corte.")]
 
 
+def _fail(exc: BaseException) -> NoReturn:
+    console.print(f"[red]{exc}[/]")
+    raise typer.Exit(code=1) from None
+
+
 def _run[T](coro: Coroutine[Any, Any, T]) -> T:
     """Executa a corrotina e transforma erro esperado em mensagem limpa."""
     try:
         return asyncio.run(coro)
     except EXPECTED_ERRORS as exc:
-        console.print(f"[red]{exc}[/]")
-        raise typer.Exit(code=1) from None
+        _fail(exc)
+    except BaseExceptionGroup as group:
+        # O TaskGroup que busca os dias em paralelo embrulha a exceção original;
+        # sem desembrulhar, o usuário veria um traceback de ExceptionGroup.
+        expected, _ = group.split(EXPECTED_ERRORS)
+        if expected is None:
+            raise
+        _fail(expected.exceptions[0])
 
 
 def _options(numbered: bool, rest: bool, load: bool, width: int) -> RenderOptions:

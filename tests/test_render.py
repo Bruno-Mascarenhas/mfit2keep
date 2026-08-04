@@ -113,3 +113,30 @@ def test_routine_to_notes_keeps_one_note_per_workout() -> None:
 
 def test_empty_workout_yields_note_without_items() -> None:
     assert workout_to_note(make_workout()).items == []
+
+
+def test_title_keeps_the_letter_when_the_name_starts_with_it() -> None:
+    # "Abdominal" começa com "A", mas isso não é o prefixo do dia.
+    workout = Workout(id="1", name="Abdominal e Core", letter="A", exercises=[])
+
+    assert workout.title == "A — Abdominal e Core"
+
+
+def test_title_does_not_duplicate_a_real_letter_prefix() -> None:
+    for name in ("A - Peito", "A — Peito", "A: Peito", "A) Peito", "A. Peito"):
+        assert Workout(id="1", name=name, letter="A", exercises=[]).title == name
+
+
+def test_title_without_letter_is_just_the_name() -> None:
+    assert Workout(id="1", name="Peito", letter=None, exercises=[]).title == "Peito"
+
+
+def test_title_of_a_name_equal_to_the_letter() -> None:
+    assert Workout(id="1", name="A", letter="A", exercises=[]).title == "A"
+
+
+def test_title_uses_a_different_letter_prefix_normally() -> None:
+    # Nome com prefixo "B -" num dia "A": o dia continua tendo que aparecer.
+    workout = Workout(id="1", name="B - Costas", letter="A", exercises=[])
+
+    assert workout.title == "A — B - Costas"

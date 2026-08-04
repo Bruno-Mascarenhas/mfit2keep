@@ -15,9 +15,7 @@ Três particularidades moldam este arquivo:
 """
 
 import asyncio
-import json
 import random
-from pathlib import Path
 from typing import Any, Protocol
 
 import gkeepapi
@@ -25,7 +23,9 @@ from gkeepapi.node import List as KeepList
 
 from ..config import STATE_DIR
 from ..keep_auth import KeepCredentials
+from ..matching import CheckedState
 from ..models import ChecklistNote
+from ..secure_io import exclusive_lock, read_secret_json, write_secret_json
 from .base import MARKER, Action, NoteDestination, NoteResult
 
 NOTE_MAP = STATE_DIR / "keep_notes.json"
@@ -74,6 +74,7 @@ class KeepDestination(NoteDestination):
         self._client = client
         self._authenticated = client is not None
         self._note_ids: dict[str, str] = _load_note_map()
+        self._forgotten: set[str] = set()
 
     # ------------------------------------------------------------------ auth
 
@@ -91,7 +92,7 @@ class KeepDestination(NoteDestination):
         self._client.authenticate(
             self._credentials.email,
             self._credentials.master_token,
-            state=_load_json(STATE_CACHE),
+            state=read_secret_json(STATE_CACHE),
             device_id=self._credentials.device_id,
         )
 
@@ -146,11 +147,22 @@ class KeepDestination(NoteDestination):
         node_id = self._note_ids.get(note.external_id or "")
         if not node_id:
             return None
+
         node = keep.get(node_id)
         # Nota apagada na mão: esquecemos o vínculo e criamos outra.
         if node is None or node.trashed or node.deleted:
             return None
-        return node if isinstance(node, KeepList) else None
+        if not isinstance(node, KeepList):
+            return None
+        # O mapa é local e o id pode ser de OUTRA conta (usuário trocou o
+        # GOOGLE_EMAIL). Sem o label, a nota não é nossa e não se reescreve.
+        if node.labels.get(self._label_id(keep)) is None:
+            return None
+        return node
+
+    def _label_id(self, keep: KeepClient) -> str | None:
+        label = keep.findLabel(MARKER, create=True)
+        return str(label.id) if label is not None else None
 
     # ----------------------------------------------------------------- purge
 
@@ -174,7 +186,9 @@ class KeepDestination(NoteDestination):
             else:
                 node.trash()
                 action = Action.TRASHED
-                self._forget(node.id)
+            # Vale para os dois casos: mantendo o vínculo, o próximo sync
+            # atualizaria em silêncio uma nota que sumiu da vista do usuário.
+            self._forget(node.id)
             results.append(NoteResult(node.title, action, _url(node)))
         return results
 
@@ -183,6 +197,8 @@ class KeepDestination(NoteDestination):
         for external_id, mapped in list(self._note_ids.items()):
             if mapped == node_id:
                 del self._note_ids[external_id]
+                # Registrado à parte para que a fusão com o disco não o traga de volta.
+                self._forgotten.add(external_id)
 
     # ----------------------------------------------------------------- close
 
@@ -191,25 +207,46 @@ class KeepDestination(NoteDestination):
 
     def _flush(self) -> None:
         assert self._client is not None
+        # O sync vem primeiro: se ele falhar, o mapa não pode registrar um
+        # vínculo para uma nota que nunca chegou ao Keep.
         self._client.sync()
-        _save_json(STATE_CACHE, self._client.dump())
-        _save_json(NOTE_MAP, self._note_ids)
+        write_secret_json(STATE_CACHE, self._client.dump())
+        self._persist_note_map()
+
+    def _persist_note_map(self) -> None:
+        """Funde com o que estiver em disco, sob trava entre processos.
+
+        Duas execuções simultâneas (duas rotinas, ou um cron disparado duas
+        vezes) sobrescreveriam o mapa uma da outra, e os vínculos perdidos
+        virariam notas duplicadas no Keep.
+        """
+        with exclusive_lock(NOTE_MAP):
+            merged = {str(k): str(v) for k, v in (read_secret_json(NOTE_MAP) or {}).items()}
+            merged.update(self._note_ids)
+            for external_id in self._forgotten:
+                merged.pop(external_id, None)
+            write_secret_json(NOTE_MAP, merged)
+            self._note_ids = merged
 
 
 def _rewrite_items(node: KeepList, title: str, wanted: list[str]) -> None:
     """Reescreve a lista preservando o que já estava marcado.
 
+    O casamento é por :func:`item_key` (o nome do exercício), não pela linha
+    inteira: renumerar a ficha ou mudar a carga não pode zerar o que o usuário
+    já marcou no relógio.
+
     O ``sort`` decrescente e explícito é o que garante a ordem: sem ele o
-    ``add()`` usa um valor aleatório e a lista sai embaralhada no relógio.
+    ``add()`` usa um valor aleatório e a lista sai embaralhada.
     """
-    checked_before = {item.text: item.checked for item in node.items}
+    before = CheckedState([(item.text, item.checked) for item in node.items])
 
     for item in list(node.items):
         item.delete()
 
     sort = random.randint(1000000000, 9999999999)
     for text in wanted:
-        node.add(text, checked_before.get(text, False), sort)
+        node.add(text, before.take(text), sort)
         sort -= KeepList.SORT_DELTA
 
     node.title = title
@@ -223,20 +260,6 @@ def _url(node: Any) -> str | None:
     return str(node_id) if node_id else None
 
 
-def _load_json(path: Path) -> dict[str, Any] | None:
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-    except OSError, ValueError:
-        return None
-    return loaded if isinstance(loaded, dict) else None
-
-
-def _save_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data), encoding="utf-8")
-    path.chmod(0o600)
-
-
 def _load_note_map() -> dict[str, str]:
-    loaded = _load_json(NOTE_MAP) or {}
+    loaded = read_secret_json(NOTE_MAP) or {}
     return {str(k): str(v) for k, v in loaded.items()}

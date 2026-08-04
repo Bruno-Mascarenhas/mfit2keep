@@ -1,8 +1,14 @@
 """Modelo de domínio — independente do formato da API do MFIT e do destino da nota."""
 
+import re
 from dataclasses import dataclass, field
 
 type Items = list["ChecklistItem"]
+
+#: Letra do dia como prefixo isolado: "A - Peito", "C: Perna", "D) Ombro".
+#: Os separadores aceitos incluem hifen, en dash (U+2013) e em dash (U+2014),
+#: escapados para nao deixar caractere ambiguo no fonte.
+_LETTER_PREFIX = re.compile("^([A-Z])\\s*[-\\u2013\\u2014:.)]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,9 +43,21 @@ class Workout:
 
     @property
     def title(self) -> str:
-        if self.letter and not self.name.strip().upper().startswith(self.letter.upper()):
-            return f"{self.letter} — {self.name}"
-        return self.name
+        """Nome do treino com a letra do dia na frente, sem duplicar.
+
+        A letra só é omitida quando já aparece como prefixo isolado ("A - Peito").
+        Um nome que apenas começa com a mesma letra ("Abdominal") continua
+        recebendo o prefixo — do contrário o dia sumiria do título.
+        """
+        name = self.name.strip()
+        if not self.letter:
+            return name
+
+        letter = self.letter.upper()
+        match = _LETTER_PREFIX.match(name.upper())
+        if name.upper() == letter or (match and match.group(1) == letter):
+            return name
+        return f"{self.letter} — {name}"
 
 
 @dataclass(frozen=True, slots=True)

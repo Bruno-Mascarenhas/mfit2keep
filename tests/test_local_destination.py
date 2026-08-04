@@ -1,15 +1,21 @@
 from pathlib import Path
 
+import pytest
+
 from mfit2keep.destinations.base import MARKER, Action
-from mfit2keep.destinations.local import LocalMarkdownDestination, slugify
+from mfit2keep.destinations.local import (
+    LocalDestinationError,
+    LocalMarkdownDestination,
+    slugify,
+)
 from mfit2keep.models import ChecklistItem, ChecklistNote
 
 
-def note(*texts: str, title: str = "🏋️ A — Peito") -> ChecklistNote:
+def note(*texts: str, title: str = "🏋️ A — Peito", external_id: str = "mfit:1") -> ChecklistNote:
     return ChecklistNote(
         title=title,
         items=[ChecklistItem(text=t) for t in texts],
-        external_id="mfit:1",
+        external_id=external_id,
     )
 
 
@@ -66,7 +72,11 @@ async def test_external_id_is_persisted(tmp_path: Path) -> None:
 
 
 async def test_upsert_all_writes_every_note(tmp_path: Path) -> None:
-    notes = [note("1. Supino", title="A"), note("1. Remada", title="B")]
+    # Treinos distintos têm external_id distinto — é o que os separa em arquivos.
+    notes = [
+        note("1. Supino", title="A", external_id="mfit:1"),
+        note("1. Remada", title="B", external_id="mfit:2"),
+    ]
 
     async with LocalMarkdownDestination(tmp_path) as destination:
         results = await destination.upsert_all(notes)
@@ -118,3 +128,73 @@ async def test_markdown_carries_the_marker_stamp(tmp_path: Path) -> None:
 
     content = Path(result.reference or "").read_text(encoding="utf-8")
     assert MARKER in content
+
+
+async def test_resync_preserves_marks_made_in_the_file(tmp_path: Path) -> None:
+    async with LocalMarkdownDestination(tmp_path) as destination:
+        created = await destination.upsert(note("1. Supino — 4x10", "2. Crucifixo — 3x12"))
+        path = Path(created.reference or "")
+        # O usuário risca o que já fez, direto no .md.
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("- [ ] 1. Supino", "- [x] 1. Supino"),
+            encoding="utf-8",
+        )
+        await destination.upsert(
+            note("1. Supino — 4x10", "2. Crucifixo — 3x12", "3. Pullover — 3x12")
+        )
+
+    content = path.read_text(encoding="utf-8")
+    assert "- [x] 1. Supino — 4x10" in content
+    assert "- [ ] 3. Pullover — 3x12" in content
+
+
+async def test_renumbering_keeps_the_marks(tmp_path: Path) -> None:
+    async with LocalMarkdownDestination(tmp_path) as destination:
+        created = await destination.upsert(note("1. Aquecimento — 5min", "2. Supino — 4x10"))
+        path = Path(created.reference or "")
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("- [ ] 2. Supino", "- [x] 2. Supino"),
+            encoding="utf-8",
+        )
+        # O treinador tira o aquecimento: o Supino vira o item 1.
+        await destination.upsert(note("1. Supino — 4x10"))
+
+    assert "- [x] 1. Supino — 4x10" in path.read_text(encoding="utf-8")
+
+
+async def test_refuses_to_overwrite_a_file_it_did_not_create(tmp_path: Path) -> None:
+    intruso = tmp_path / f"{slugify('🏋️ A — Peito')}-1.md"
+    intruso.write_text("# Minhas metas 2026\n\n- [x] correr 10km\n", encoding="utf-8")
+
+    with pytest.raises(LocalDestinationError, match="não foi criado pelo mfit2keep"):
+        async with LocalMarkdownDestination(tmp_path) as destination:
+            await destination.upsert(note("1. Supino"))
+
+    assert "correr 10km" in intruso.read_text(encoding="utf-8")
+
+
+async def test_renaming_the_workout_does_not_leave_a_stale_file(tmp_path: Path) -> None:
+    async with LocalMarkdownDestination(tmp_path) as destination:
+        await destination.upsert(note("1. Supino", title="🏋️ A — Peito"))
+        await destination.upsert(note("1. Supino", title="🏋️ A — Peitoral"))
+
+    assert len(list(tmp_path.glob("*.md"))) == 1
+
+
+async def test_similar_titles_do_not_share_a_file(tmp_path: Path) -> None:
+    async with LocalMarkdownDestination(tmp_path) as destination:
+        await destination.upsert(note("1. Supino", title="Perna A", external_id="mfit:1"))
+        await destination.upsert(note("1. Agachamento", title="Perna-A", external_id="mfit:2"))
+
+    # Slug idêntico, treinos diferentes: precisam de arquivos diferentes.
+    assert len(list(tmp_path.glob("*.md"))) == 2
+
+
+async def test_archiving_twice_does_not_overwrite_the_first(tmp_path: Path) -> None:
+    async with LocalMarkdownDestination(tmp_path) as destination:
+        await destination.upsert(note("1. Supino"))
+        await destination.purge(archive=True)
+        await destination.upsert(note("1. Supino"))
+        await destination.purge(archive=True)
+
+    assert len(list((tmp_path / "arquivadas").glob("*.md"))) == 2

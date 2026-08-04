@@ -29,6 +29,7 @@ import keyring
 from keyring.errors import KeyringError
 
 from .config import STATE_DIR, Settings
+from .secure_io import write_secret
 
 SERVICE = "mfit2keep"
 #: Fallback quando não há keyring (servidor headless, container).
@@ -73,12 +74,20 @@ async def exchange_oauth_token(email: str, oauth_token: str, device_id: str | No
 
     token = response.get("Token")
     if not token:
+        # NUNCA ecoar a resposta inteira: em caso de sucesso parcial ela traz
+        # Auth/SID/LSID, que são credenciais tão boas quanto o master token.
         raise KeepAuthError(
-            "O Google não devolveu o master token. Resposta: "
-            f"{response.get('Error') or response}. "
-            "O cookie oauth_token é de uso único — refaça o passo 1 numa aba anônima nova."
+            f"O Google não devolveu o master token (erro: {_safe_error(response)}). "
+            "O cookie oauth_token é de uso único e vale poucos minutos — "
+            "refaça o passo 1 numa aba anônima nova."
         )
     return token
+
+
+def _safe_error(response: dict[str, str]) -> str:
+    """Extrai só o código de erro, que não é segredo."""
+    code = response.get("Error") or response.get("ErrorDetail") or "desconhecido"
+    return str(code)[:120]
 
 
 def store(credentials: KeepCredentials) -> str:
@@ -93,9 +102,8 @@ def store(credentials: KeepCredentials) -> str:
     try:
         keyring.set_password(SERVICE, credentials.email, payload)
     except KeyringError:
-        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        TOKEN_FILE.write_text(payload, encoding="utf-8")
-        TOKEN_FILE.chmod(0o600)
+        # write_secret cria o arquivo já 0600 — sem janela de leitura por terceiros.
+        write_secret(TOKEN_FILE, payload)
         return str(TOKEN_FILE)
     return f"keyring ({SERVICE})"
 

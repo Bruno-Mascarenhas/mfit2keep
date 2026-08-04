@@ -182,3 +182,87 @@ async def test_workout_without_days_is_parsed_as_a_single_session(settings: Sett
 
     assert len(workouts) == 1
     assert workouts[0].name == "Treino avulso"
+
+
+@pytest.fixture(autouse=True)
+def instant_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sem espera real: o teste verifica a política de retry, não o relógio."""
+    monkeypatch.setattr(mfit, "RETRY_INITIAL_DELAY", 0.0)
+
+
+@respx.mock
+async def test_transient_network_error_is_retried(settings: Settings) -> None:
+    respx.post(f"{BASE_URL}/auth/client").mock(
+        return_value=httpx.Response(200, json={"token": "jwt"})
+    )
+    route = respx.get(f"{BASE_URL}/v2/client/workout/all").mock(
+        side_effect=[httpx.ConnectError("rede caiu"), httpx.Response(200, json=[{"id": 1}])]
+    )
+
+    async with MfitClient(settings) as client:
+        assert await client.list_workouts() == [{"id": 1}]
+
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_server_error_is_retried(settings: Settings) -> None:
+    respx.post(f"{BASE_URL}/auth/client").mock(
+        return_value=httpx.Response(200, json={"token": "jwt"})
+    )
+    route = respx.get(f"{BASE_URL}/v2/client/workout/all").mock(
+        side_effect=[httpx.Response(503), httpx.Response(200, json=[])]
+    )
+
+    async with MfitClient(settings) as client:
+        await client.list_workouts()
+
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_rate_limit_is_retried(settings: Settings) -> None:
+    respx.post(f"{BASE_URL}/auth/client").mock(
+        return_value=httpx.Response(200, json={"token": "jwt"})
+    )
+    route = respx.get(f"{BASE_URL}/v2/client/workout/all").mock(
+        side_effect=[httpx.Response(429), httpx.Response(200, json=[])]
+    )
+
+    async with MfitClient(settings) as client:
+        await client.list_workouts()
+
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_client_error_is_not_retried(settings: Settings) -> None:
+    respx.post(f"{BASE_URL}/auth/client").mock(
+        return_value=httpx.Response(200, json={"token": "jwt"})
+    )
+    route = respx.get(f"{BASE_URL}/v2/client/workout/all").mock(
+        return_value=httpx.Response(404, json={"message": "não existe"})
+    )
+
+    async with MfitClient(settings) as client:
+        with pytest.raises(MfitError, match="404"):
+            await client.list_workouts()
+
+    # 404 não é transitório: reenviar só gastaria tempo.
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_retry_gives_up_and_reports(settings: Settings) -> None:
+    respx.post(f"{BASE_URL}/auth/client").mock(
+        return_value=httpx.Response(200, json={"token": "jwt"})
+    )
+    route = respx.get(f"{BASE_URL}/v2/client/workout/all").mock(
+        side_effect=httpx.ConnectError("rede fora")
+    )
+
+    async with MfitClient(settings) as client:
+        with pytest.raises(MfitError, match="após 3 tentativas"):
+            await client.list_workouts()
+
+    assert route.call_count == 3
