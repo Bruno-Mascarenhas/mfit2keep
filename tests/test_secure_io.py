@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -17,13 +18,17 @@ from mfit2keep.secure_io import (
 
 
 @pytest.fixture(autouse=True)
-def permissive_umask() -> object:
-    """umask 0 é o pior caso: sem ele o teste passaria por sorte."""
+def permissive_umask() -> Iterator[None]:
+    """umask 0 é o pior caso: sem ele o teste de modo passaria por sorte."""
+    if not secure_io.POSIX:
+        yield
+        return
     previous = os.umask(0)
     yield
     os.umask(previous)
 
 
+@pytest.mark.skipif(not secure_io.POSIX, reason="modo de arquivo é conceito POSIX")
 def test_secret_file_is_never_world_readable(tmp_path: Path) -> None:
     path = tmp_path / "token.json"
 
@@ -34,6 +39,7 @@ def test_secret_file_is_never_world_readable(tmp_path: Path) -> None:
     assert not is_world_readable(path)
 
 
+@pytest.mark.skipif(not secure_io.POSIX, reason="modo de arquivo é conceito POSIX")
 def test_parent_directory_is_private(tmp_path: Path) -> None:
     path = tmp_path / "estado" / "token.json"
 
@@ -42,6 +48,7 @@ def test_parent_directory_is_private(tmp_path: Path) -> None:
     assert path.parent.stat().st_mode & 0o777 == 0o700
 
 
+@pytest.mark.skipif(not secure_io.POSIX, reason="modo de arquivo é conceito POSIX")
 def test_existing_loose_directory_is_tightened(tmp_path: Path) -> None:
     loose = tmp_path / "estado"
     loose.mkdir(mode=0o755)
@@ -59,13 +66,22 @@ def test_content_round_trips(tmp_path: Path) -> None:
     assert read_secret_json(path) == {"token": "aas_et/abc", "device_id": "dead"}
 
 
-def test_overwrite_keeps_permissions(tmp_path: Path) -> None:
+def test_overwrite_replaces_the_content(tmp_path: Path) -> None:
     path = tmp_path / "token.json"
     write_secret(path, "primeiro")
 
     write_secret(path, "segundo")
 
     assert path.read_text(encoding="utf-8") == "segundo"
+
+
+@pytest.mark.skipif(not secure_io.POSIX, reason="modo de arquivo é conceito POSIX")
+def test_overwrite_keeps_the_restricted_mode(tmp_path: Path) -> None:
+    path = tmp_path / "token.json"
+    write_secret(path, "primeiro")
+
+    write_secret(path, "segundo")
+
     assert path.stat().st_mode & 0o777 == 0o600
 
 
