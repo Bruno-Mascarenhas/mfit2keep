@@ -1,0 +1,49 @@
+version: 2
+
+updates:
+  # Dependências Python declaradas no pyproject.toml.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+      day: monday
+      time: "06:00"
+      timezone: America/Sao_Paulo
+    # Tudo num PR só: um por dependência vira ruído e ninguém revisa.
+    groups:
+      python:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - major
+          - minor
+          - patch
+    open-pull-requests-limit: 1
+    commit-message:
+      prefix: "chore"
+    labels:
+      - dependências
+
+  # Versões das actions usadas no CI.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+      day: monday
+      time: "06:00"
+      timezone: America/Sao_Paulo
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - major
+          - minor
+          - patch
+    open-pull-requests-limit: 1
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependências
