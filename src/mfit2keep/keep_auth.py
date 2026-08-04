@@ -25,7 +25,6 @@ import secrets
 import warnings
 from dataclasses import dataclass
 
-import gpsoauth
 import keyring
 from keyring.errors import KeyringError
 
@@ -74,7 +73,14 @@ def _stable_device_id(email: str) -> str:
 
 
 async def exchange_oauth_token(email: str, oauth_token: str, device_id: str | None = None) -> str:
-    """Troca o cookie ``oauth_token`` pelo master token ``aas_et/…``."""
+    """Troca o cookie ``oauth_token`` pelo master token ``aas_et/…``.
+
+    O ``gpsoauth`` (e o ``requests`` que ele arrasta) é importado aqui dentro
+    de propósito: ele custa ~70ms dos ~240ms de partida da CLI, e só serve
+    para este ritual, que acontece uma vez na vida.
+    """
+    import gpsoauth
+
     device_id = device_id or new_device_id()
     response = await asyncio.to_thread(
         gpsoauth.exchange_token, email, oauth_token.strip(), device_id

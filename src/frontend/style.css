@@ -256,3 +256,29 @@ footer {
   margin: 0;
   opacity: 0.85;
 }
+
+/* Endereço que precisa ser copiado, não clicado: clicar abriria aba normal, e
+   o passo exige janela anônima. */
+.endereco {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.4rem 0 0.2rem;
+}
+
+.endereco code {
+  flex: 1 1 18rem;
+  padding: 0.45rem 0.6rem;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.endereco button {
+  padding: 0.4rem 0.7rem;
+  font-size: 0.85rem;
+}
+
+.ajuda-inline {
+  color: var(--suave);
+}

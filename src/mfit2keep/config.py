@@ -134,7 +134,16 @@ def replace_env_vars(new_lines: list[str]) -> Path:
     """
     path = env_file()
     replaced = {line.split("=", 1)[0] for line in new_lines}
-    obsolete = replaced | {name.removesuffix("_ENC") for name in replaced}
+    # Um segredo tem duas formas possíveis no arquivo (texto puro e ``_ENC``).
+    # Gravar uma torna a outra OBSOLETA, nos dois sentidos: sem isso, trocar a
+    # senha no painel não teria efeito nenhum — a versão cifrada antiga tem
+    # precedência na leitura e continuaria valendo.
+    obsolete = {
+        forma
+        for name in replaced
+        for base in [name.removesuffix("_ENC")]
+        for forma in (base, f"{base}_ENC")
+    }
     # Só o que está sendo trocado POR UMA VERSÃO CIFRADA precisa sumir de vez.
     # Gravar `MFIT_PASSWORD=` em texto puro é uso legítimo (é o que o painel
     # faz no primeiro uso), e não pode ser confundido com segredo esquecido.

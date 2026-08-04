@@ -4,13 +4,14 @@
 
 **Seus treinos do [MFIT Personal](https://mfitpersonal.com.br) viram notas com checkbox no Google Keep — para você seguir a série pelo smartwatch, na academia.**
 
+[![Versão 1.0.0](https://img.shields.io/badge/versão-1.0.0-success)](https://github.com/Bruno-Mascarenhas/mfit2keep/releases)
 [![CI](https://github.com/Bruno-Mascarenhas/mfit2keep/actions/workflows/ci.yml/badge.svg)](https://github.com/Bruno-Mascarenhas/mfit2keep/actions/workflows/ci.yml)
 [![Linux | Windows | macOS](https://img.shields.io/badge/os-linux%20%7C%20windows%20%7C%20macos-informational)](#instalação)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![mypy strict](https://img.shields.io/badge/mypy-strict-2A6DB2)](https://mypy-lang.org/)
 [![uv](https://img.shields.io/badge/deps-uv-DE5FE9?logo=uv&logoColor=white)](https://docs.astral.sh/uv/)
-[![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-269%20passing-brightgreen)](tests/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -30,15 +31,20 @@ guiada que leva do login até as notas prontas no Keep:
 <div align="center">
   <table>
     <tr>
-      <td width="45%" valign="top" align="center">
+      <td width="33%" valign="top" align="center">
         <img src="docs/step1.png" width="100%"
              alt="Passo 1 do painel: e-mail e senha do MFIT e a conta Google">
-        <br><sub><b>1.</b> preencha a conta — o número fica verde quando salva</sub>
+        <br><sub><b>1.</b> a conta — o número fica verde quando salva</sub>
       </td>
-      <td width="55%" valign="top" align="center">
-        <img src="docs/steps234.png" width="100%"
-             alt="Passos 2 a 4 do painel: liberar o Google Keep, proteger a senha e criar as notas">
-        <br><sub><b>2 a 4.</b> a receita do Keep, proteger a senha e criar as notas</sub>
+      <td width="34%" valign="top" align="center">
+        <img src="docs/step2.png" width="100%"
+             alt="Passo 2 do painel: a receita para liberar o Google Keep, com o endereço copiável">
+        <br><sub><b>2.</b> a receita do Keep, com o endereço pronto para copiar</sub>
+      </td>
+      <td width="33%" valign="top" align="center">
+        <img src="docs/step34.png" width="100%"
+             alt="Passos 3 e 4 do painel: proteger a senha e criar as notas">
+        <br><sub><b>3 e 4.</b> proteger a senha e criar as notas</sub>
       </td>
     </tr>
   </table>
@@ -100,13 +106,30 @@ mesmo `Workout` que sai pelo `exportar`, então dá para largar o MFIT sem larga
 Roda em **Linux, Windows e macOS** — o CI executa a suíte nos três a cada PR. Precisa de
 **Python 3.14+**.
 
+Se ainda não tem o [uv](https://docs.astral.sh/uv/), instale primeiro:
+
+```bash
+# Linux e macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Windows (PowerShell)
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Depois:
+
 ```bash
 git clone https://github.com/Bruno-Mascarenhas/mfit2keep.git
 cd mfit2keep
 
 uv venv --python 3.14
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
 uv pip install -e ".[dev]"
 ```
+
+> [!NOTE]
+> O `activate` não é opcional: sem ele o comando `mfit2keep` não fica disponível.
+> Se preferir não ativar nada, todo comando funciona com `uv run` na frente —
+> por exemplo `uv run mfit2keep painel`.
 
 <details>
 <summary>Com conda para o interpretador</summary>
@@ -146,7 +169,11 @@ no Windows, `Application Support` no macOS).
 ### 2. Google Keep
 
 A API oficial do Keep **não atende conta pessoal** (veja [abaixo](#por-que-gkeepapi-e-não-a-api-oficial)),
-então o acesso é por *master token* — um ritual manual, **uma vez só**:
+então o acesso é por *master token* — um ritual manual, **uma vez só**.
+
+> [!TIP]
+> O [painel](#painel-no-navegador) faz este passo com a receita na tela, em português e sem
+> terminal: `mfit2keep painel`. O que vem abaixo é o mesmo ritual, pela linha de comando.
 
 ```bash
 mfit2keep keep-login
@@ -409,6 +436,7 @@ src/mfit2keep/
 ├── keep_auth.py        # master token: troca, keyring, fallback em arquivo
 ├── secrets_store.py    # cifragem nativa: systemd-creds (Linux) / DPAPI (Windows)
 ├── _dpapi.py           # DPAPI via ctypes, sem dependência extra
+├── errors.py           # o que vira mensagem e o que sobe — política única
 ├── secure_io.py        # escrita restrita e atômica + trava (fcntl/msvcrt)
 ├── web.py              # painel local: servidor da biblioteca padrão, só em 127.0.0.1
 └── cli.py              # Typer + Rich
@@ -444,7 +472,7 @@ Mapeada a partir do bundle do SPA. Autenticação é `authorization: <jwt>` — 
 ## Desenvolvimento
 
 ```bash
-pytest                            # 238 testes
+pytest                            # 269 testes
 ruff check src tests
 ruff format src tests
 mypy --platform linux             # o código tem caminho por sistema:

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img"
+     aria-label="Halter, ícone do mfit2keep">
+  <!-- Um halter, desenhado em blocos grossos: a 16px na aba, detalhe fino
+       vira borrão. As anilhas são o que dá a silhueta reconhecível. -->
+  <g fill="#1a73e8">
+    <!-- barra -->
+    <rect x="9" y="14" width="14" height="4" rx="1" />
+    <!-- anilhas de dentro -->
+    <rect x="6" y="10" width="4" height="12" rx="1.5" />
+    <rect x="22" y="10" width="4" height="12" rx="1.5" />
+    <!-- travas externas -->
+    <rect x="2" y="12.5" width="3" height="7" rx="1.5" />
+    <rect x="27" y="12.5" width="3" height="7" rx="1.5" />
+  </g>
+</svg>

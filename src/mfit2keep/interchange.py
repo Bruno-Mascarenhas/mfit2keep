@@ -14,6 +14,7 @@ O formato é versionado: ler um arquivo de versão futura falha com mensagem
 clara em vez de interpretar campo errado em silêncio.
 """
 
+from dataclasses import replace
 from typing import Any
 
 from mfit2keep.models import Exercise, Workout
@@ -53,7 +54,38 @@ def workouts_from_dict(payload: dict[str, Any]) -> list[Workout]:
     raw_workouts = payload.get("workouts")
     if not isinstance(raw_workouts, list):
         raise InterchangeError("Campo 'workouts' ausente ou não é uma lista.")
-    return [_workout_from_dict(raw) for raw in raw_workouts]
+
+    treinos = [_workout_from_dict(raw) for raw in raw_workouts]
+    return _with_unique_ids(treinos)
+
+
+def _with_unique_ids(treinos: list[Workout]) -> list[Workout]:
+    """Garante um id distinto por treino, inventando quando o arquivo não traz.
+
+    O id vira a chave que liga o treino à nota no destino. Num arquivo escrito
+    à mão o campo costuma faltar, e sem isto todos os treinos ficariam com o
+    mesmo id — o destino trataria os cinco dias como um só e quatro sumiriam.
+
+    A derivação é pelo nome, e não pela posição, para que reordenar os dias no
+    arquivo não desfaça o vínculo com as notas já criadas.
+    """
+    usados: set[str] = set()
+    resultado: list[Workout] = []
+
+    for posicao, treino in enumerate(treinos):
+        identificador = treino.id or _slug(treino.name) or f"treino-{posicao + 1}"
+        if identificador in usados:
+            # Dois treinos com o mesmo nome e sem id: só a posição os separa.
+            identificador = f"{identificador}-{posicao + 1}"
+        usados.add(identificador)
+        resultado.append(
+            treino if treino.id == identificador else replace(treino, id=identificador)
+        )
+    return resultado
+
+
+def _slug(nome: str) -> str:
+    return "-".join(nome.casefold().split())
 
 
 def _workout_to_dict(workout: Workout) -> dict[str, Any]:
@@ -113,10 +145,15 @@ def _exercise_from_dict(raw: Any) -> Exercise:
 
 
 def _optional_text(value: Any) -> str | None:
-    """Aceita número e texto, recusa estrutura — o formato é de texto."""
+    """Aceita número e texto, recusa estrutura — o formato é de texto.
+
+    A quebra de linha é achatada pelo mesmo motivo do parser do MFIT: no
+    Markdown ela cortaria o item ao meio e no Keep viraria um item sem
+    checkbox, perdendo a marcação do usuário na ressincronização.
+    """
     if value is None:
         return None
     if isinstance(value, dict | list):
         raise InterchangeError(f"Esperava texto, veio {type(value).__name__}.")
-    text = str(value).strip()
+    text = " ".join(str(value).split())
     return text or None

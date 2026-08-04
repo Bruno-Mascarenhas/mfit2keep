@@ -10,8 +10,10 @@ from typing import Any
 
 import pytest
 
-from mfit2keep import web
+from mfit2keep import keep_auth, secrets_store, web
 from mfit2keep.config import ConfigError
+from mfit2keep.sources.mfit import MfitSource
+from mfit2keep.sources.mfit_api import MfitError
 
 
 @pytest.fixture
@@ -201,3 +203,118 @@ def test_frontend_files_exist() -> None:
     assert (diretorio / "index.html").is_file()
     assert (diretorio / "app.js").is_file()
     assert (diretorio / "style.css").is_file()
+
+
+def test_state_queries_the_keyring_only_once(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    chamadas = 0
+    original = keep_auth.stored_backend
+
+    def contando(settings: Any) -> Any:
+        nonlocal chamadas
+        chamadas += 1
+        return original(settings)
+
+    monkeypatch.setattr(keep_auth, "stored_backend", contando)
+
+    web.read_state()
+
+    # A tela recarrega o estado depois de cada ação; cada consulta bate no keyring.
+    assert chamadas == 1
+
+
+def test_exception_group_from_the_task_group_becomes_a_message(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, token = painel
+
+    def explode(_payload: dict[str, Any]) -> dict[str, Any]:
+        # Os dias vêm de um TaskGroup: o erro chega sempre embrulhado.
+        raise ExceptionGroup("dias", [MfitError("token expirou")])
+
+    monkeypatch.setitem(web.ACTIONS, "/api/sync", explode)
+
+    status, corpo = pedir(base, "/api/sync", token, {})
+
+    assert status == 400
+    assert corpo["erro"] == "token expirou"
+
+
+def test_listing_routines_without_step_one_says_what_to_do(painel: tuple[str, str]) -> None:
+    base, token = painel
+
+    status, corpo = pedir(base, "/api/rotinas", token, {})
+
+    assert status == 400
+    assert "passo 1" in corpo["erro"]
+
+
+def test_sync_without_the_keep_token_fails_before_touching_the_network(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, token = painel
+    pedir(base, "/api/config", token, {"mfit_email": "eu@x.com", "mfit_password": "segredo"})
+
+    async def nunca(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("não deveria ter buscado os treinos na rede")
+
+    monkeypatch.setattr(MfitSource, "fetch_workouts", nunca)
+
+    status, corpo = pedir(base, "/api/sync", token, {"routine_id": "1"})
+
+    assert status == 400
+    assert "passo 2" in corpo["erro"]
+
+
+def test_changing_the_password_keeps_it_protected(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, token = painel
+    monkeypatch.setattr(secrets_store, "cipher_available", lambda: True)
+    monkeypatch.setattr(secrets_store, "encrypt", lambda _chave, valor: f"cifrado:{valor}")
+    pedir(base, "/api/config", token, {"mfit_email": "eu@x.com", "mfit_password": "velha"})
+    pedir(base, "/api/proteger", token, {})
+
+    _, corpo = pedir(base, "/api/config", token, {"mfit_password": "nova"})
+
+    # Gravar em texto puro invalida o cifrado; sem recifrar, trocar a senha
+    # desprotegeria o .env sem o usuário perceber.
+    assert corpo["senha_cifrada"] is True
+    assert "protegida" in corpo["mensagem"]
+
+
+def test_changing_the_password_warns_when_it_cannot_reprotect(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, token = painel
+    monkeypatch.setattr(secrets_store, "cipher_available", lambda: True)
+    monkeypatch.setattr(secrets_store, "encrypt", lambda _chave, valor: f"cifrado:{valor}")
+    pedir(base, "/api/config", token, {"mfit_email": "eu@x.com", "mfit_password": "velha"})
+    pedir(base, "/api/proteger", token, {})
+
+    monkeypatch.setattr(secrets_store, "cipher_available", lambda: False)
+    _, corpo = pedir(base, "/api/config", token, {"mfit_password": "nova"})
+
+    assert corpo["senha_cifrada"] is False
+    assert "texto puro" in corpo["mensagem"]
+
+
+def test_the_anonymous_window_step_does_not_offer_a_normal_link() -> None:
+    pagina = (web.frontend_dir() / "index.html").read_text(encoding="utf-8")
+
+    # Um link abriria aba normal — o contrário do que o passo manda fazer.
+    assert 'href="https://accounts.google.com/EmbeddedSetup"' not in pagina
+    assert "endereco-google" in pagina
+
+
+def test_the_tab_has_an_icon(painel: tuple[str, str]) -> None:
+    base, _ = painel
+
+    with urllib.request.urlopen(base + "/static/favicon.svg", timeout=10) as resposta:
+        assert resposta.status == 200
+        assert resposta.headers["Content-Type"] == "image/svg+xml"
+
+    pagina = (web.frontend_dir() / "index.html").read_text(encoding="utf-8")
+    # Sem o link, o navegador mostra o globo genérico na aba.
+    assert 'rel="icon"' in pagina
