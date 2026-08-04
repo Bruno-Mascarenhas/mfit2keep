@@ -1,0 +1,110 @@
+[project]
+name = "mfit2keep"
+version = "0.1.0"
+description = "Exporta treinos do MFIT Personal para notas com checkbox no Google Keep, para seguir a série pelo smartwatch"
+authors = [{ name = "Bruno Mascarenhas", email = "brunomasck@gmail.com" }]
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.14"
+keywords = [
+    "mfit",
+    "mfit-personal",
+    "google-keep",
+    "gkeepapi",
+    "workout",
+    "treino",
+    "academia",
+    "wear-os",
+    "smartwatch",
+    "checklist",
+    "fitness",
+    "cli",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: Portuguese (Brazilian)",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/Bruno-Mascarenhas/mfit2keep"
+Repository = "https://github.com/Bruno-Mascarenhas/mfit2keep"
+Issues = "https://github.com/Bruno-Mascarenhas/mfit2keep/issues"
+dependencies = [
+    "httpx>=0.28.1",
+    "python-dotenv>=1.1.0",
+    "typer>=0.16.0",
+    "rich>=14.0.0",
+    # Google Keep: a API oficial é Workspace-only, conta pessoal só via gkeepapi.
+    "gkeepapi>=0.17.1",
+    "gpsoauth>=2.0.0",
+    "keyring>=25.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=1.0.0",
+    "respx>=0.22.0",
+    "ruff>=0.14.0",
+    "mypy>=1.18.0",
+]
+
+[project.scripts]
+mfit2keep = "mfit2keep.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mfit2keep"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# O Protocol espelha a API do gkeepapi, que é camelCase (createList).
+"src/mfit2keep/destinations/keep.py" = ["N802"]
+# Os testes acessam _client de propósito e espelham o camelCase do gkeepapi.
+"tests/*" = ["SLF001", "N802"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.14"
+files = ["src", "tests"]
+strict = true
+warn_unreachable = true
+enable_error_code = [
+    "redundant-expr",
+    "possibly-undefined",
+    "truthy-bool",
+    "ignore-without-code",
+]
+
+[[tool.mypy.overrides]]
+# A API do MFIT devolve JSON sem schema; o parser é quem impõe o formato.
+module = "mfit2keep.parser"
+disallow_any_explicit = false
+
+[[tool.mypy.overrides]]
+# Nenhuma das três publica py.typed, ainda que o gkeepapi seja anotado.
+module = ["gkeepapi.*", "gpsoauth.*", "keyring.*"]
+ignore_missing_imports = true
