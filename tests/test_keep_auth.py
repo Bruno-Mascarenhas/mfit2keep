@@ -79,6 +79,7 @@ def test_store_then_load_round_trips_through_keyring(
     assert credentials == KeepCredentials("eu@gmail.com", "aas_et/abc", "dead")
 
 
+@pytest.mark.filterwarnings("ignore::mfit2keep.keep_auth.KeyringUnavailableWarning")
 def test_store_falls_back_to_file_without_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
     def explode(*_args: object) -> None:
         raise KeyringError("sem D-Bus")
@@ -92,6 +93,7 @@ def test_store_falls_back_to_file_without_keyring(monkeypatch: pytest.MonkeyPatc
     assert keep_auth.load(settings()).master_token == "aas_et/abc"
 
 
+@pytest.mark.filterwarnings("ignore::mfit2keep.keep_auth.KeyringUnavailableWarning")
 def test_token_file_is_not_world_readable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(keyring, "set_password", lambda *_: (_ for _ in ()).throw(KeyringError()))
 
@@ -128,3 +130,59 @@ async def test_exchange_failure_explains_single_use_cookie(
 
     with pytest.raises(KeepAuthError, match="uso único"):
         await keep_auth.exchange_oauth_token("eu@gmail.com", "oauth2_4/velho")
+
+
+def test_token_is_reachable_without_google_email_in_the_env(
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    # `keep-login --email` aceita a conta sem gravá-la em lugar nenhum.
+    keep_auth.store(KeepCredentials("outra@gmail.com", "aas_et/abc", "dead"))
+
+    credentials = keep_auth.load(settings(google_email=None))
+
+    assert credentials.master_token == "aas_et/abc"
+    assert credentials.email == "outra@gmail.com"
+
+
+def test_stored_token_is_written_under_both_keys(
+    fake_keyring: dict[tuple[str, str], str],
+) -> None:
+    keep_auth.store(KeepCredentials("eu@gmail.com", "aas_et/abc", "dead"))
+
+    assert (keep_auth.SERVICE, "eu@gmail.com") in fake_keyring
+    assert (keep_auth.SERVICE, keep_auth.DEFAULT_ACCOUNT) in fake_keyring
+
+
+def test_forget_clears_both_keys(
+    fake_keyring: dict[tuple[str, str], str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(keyring, "delete_password", lambda s, u: fake_keyring.pop((s, u), None))
+    keep_auth.store(KeepCredentials("eu@gmail.com", "aas_et/abc", "dead"))
+
+    keep_auth.forget("eu@gmail.com")
+
+    assert fake_keyring == {}
+
+
+def test_plaintext_fallback_is_announced(monkeypatch: pytest.MonkeyPatch) -> None:
+    def explode(*_args: object) -> None:
+        raise KeyringError("sem D-Bus")
+
+    monkeypatch.setattr(keyring, "set_password", explode)
+
+    # Em cron/SSH o keyring some; degradar para texto puro em silêncio é o pior caso.
+    with pytest.warns(keep_auth.KeyringUnavailableWarning, match="texto puro"):
+        keep_auth.store(KeepCredentials("eu@gmail.com", "aas_et/abc", "dead"))
+
+
+def test_reading_from_the_plaintext_file_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+    def explode(*_args: object) -> None:
+        raise KeyringError("sem D-Bus")
+
+    monkeypatch.setattr(keyring, "set_password", explode)
+    monkeypatch.setattr(keyring, "get_password", explode)
+    with pytest.warns(keep_auth.KeyringUnavailableWarning):
+        keep_auth.store(KeepCredentials("eu@gmail.com", "aas_et/abc", "dead"))
+
+    with pytest.warns(keep_auth.KeyringUnavailableWarning, match="texto puro"):
+        keep_auth.load(settings())

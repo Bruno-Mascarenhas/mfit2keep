@@ -6,6 +6,8 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from . import secrets_store
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 #: Repositório clonado (instalação editável): o .env e o .state ficam ao lado do código.
 _IN_REPO = (PACKAGE_ROOT / "pyproject.toml").is_file()
@@ -62,13 +64,29 @@ class Settings:
     #: Master token ``aas_et/…``. O keyring é o lugar recomendado; isto aqui é
     #: o atalho para quem prefere manter tudo no .env.
     google_master_token: str | None = None
+    #: Versões cifradas com systemd-creds (veja :mod:`mfit2keep.secrets_store`).
+    password_enc: str | None = None
+    google_master_token_enc: str | None = None
+
+    def resolved_password(self) -> str | None:
+        return secrets_store.resolve(
+            "mfit_password", plaintext=self.password, encrypted=self.password_enc
+        )
+
+    def resolved_master_token(self) -> str | None:
+        return secrets_store.resolve(
+            "google_master_token",
+            plaintext=self.google_master_token,
+            encrypted=self.google_master_token_enc,
+        )
 
     def require_credentials(self) -> tuple[str, str]:
-        if not self.email or not self.password:
+        password = self.resolved_password()
+        if not self.email or not password:
             raise ConfigError(
                 f"Defina MFIT_EMAIL e MFIT_PASSWORD em {env_file()} (copie de .env.example)."
             )
-        return self.email, self.password
+        return self.email, password
 
 
 def load_settings() -> Settings:
@@ -90,4 +108,6 @@ def load_settings() -> Settings:
         token=get("MFIT_TOKEN"),
         google_email=get("GOOGLE_EMAIL"),
         google_master_token=get("GOOGLE_MASTER_TOKEN"),
+        password_enc=get("MFIT_PASSWORD_ENC"),
+        google_master_token_enc=get("GOOGLE_MASTER_TOKEN_ENC"),
     )

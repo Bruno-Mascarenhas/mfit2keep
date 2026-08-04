@@ -20,7 +20,7 @@ from typing import Any, Self
 import httpx
 
 from .config import STATE_DIR, Settings
-from .secure_io import write_secret_json
+from .secure_io import read_secret_json, write_secret_json
 
 type Json = Any
 
@@ -80,10 +80,13 @@ class MfitClient:
         return self._token
 
     def _cached_token(self) -> str | None:
-        try:
-            cached = json.loads(TOKEN_CACHE.read_text())["token"]
-        except OSError, ValueError, KeyError:
-            return None
+        """Cache corrompido é cache-miss, nunca exceção.
+
+        ``read_secret_json`` já rejeita o que não for objeto JSON: um arquivo
+        truncado (disco com bad block, escrita interrompida) precisa levar a um
+        login novo, não derrubar o comando.
+        """
+        cached = (read_secret_json(TOKEN_CACHE) or {}).get("token")
         return cached if isinstance(cached, str) and cached else None
 
     def _store_token(self, token: str) -> None:

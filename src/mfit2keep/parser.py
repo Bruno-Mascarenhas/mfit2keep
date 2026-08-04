@@ -73,13 +73,37 @@ def _join(parts: list[str | None], sep: str) -> str | None:
     return sep.join(unique)
 
 
+def _column(rows: list[tuple[str | None, ...]], index: int) -> str | None:
+    """Formata uma coluna das séries preservando a leitura posicional.
+
+    Deduplicar cada campo por conta própria desalinha a ficha: com duas séries
+    de repetições diferentes e a mesma carga, "12 / 10" ficaria ao lado de um
+    único valor de carga sem dizer a qual série ele pertence. Aqui a coluna só
+    encolhe quando é constante — aí mostrar uma vez é inequívoco. Do contrário
+    ela mantém uma entrada por série, com "—" nos buracos.
+    """
+    values = [row[index] for row in rows]
+    if not any(values):
+        return None
+    if len(set(values)) == 1:
+        return values[0]
+    return " / ".join(value or "—" for value in values)
+
+
 def parse_exercise(raw: dict[str, Any], *, group: str | None = None) -> Exercise:
     series: list[dict[str, Any]] = raw.get("series") or []
+    rows: list[tuple[str | None, ...]] = [
+        (_reps(s), _load(s.get("carga")), _rest(s)) for s in series
+    ]
+    # Séries idênticas (o caso comum) viram uma linha só, tudo-ou-nada.
+    if len(set(rows)) == 1:
+        rows = rows[:1]
+
     return Exercise(
         name=_clean(raw.get("name")) or "Exercício sem nome",
-        reps=_join([_reps(s) for s in series], " / "),
-        load=_join([_load(s.get("carga")) for s in series], " / "),
-        rest=_join([_rest(s) for s in series], " / "),
+        reps=_column(rows, 0),
+        load=_column(rows, 1),
+        rest=_column(rows, 2),
         notes=_join([_clean(s.get("obs")) for s in series], " · "),
         group=group,
     )

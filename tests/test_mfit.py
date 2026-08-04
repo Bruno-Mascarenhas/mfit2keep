@@ -266,3 +266,20 @@ async def test_retry_gives_up_and_reports(settings: Settings) -> None:
             await client.list_workouts()
 
     assert route.call_count == 3
+
+
+async def test_corrupted_token_cache_is_a_cache_miss(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cache = tmp_path / "mfit_token.json"
+    # JSON válido, mas não é objeto: um arquivo truncado por bad block gera isso.
+    cache.write_text('["nao-e-um-objeto"]', encoding="utf-8")
+    monkeypatch.setattr(mfit, "TOKEN_CACHE", cache)
+
+    with respx.mock:
+        respx.post(f"{BASE_URL}/auth/client").mock(
+            return_value=httpx.Response(200, json={"token": "novo"})
+        )
+        async with MfitClient(settings) as client:
+            # Cache ruim tem que virar login novo, não TypeError.
+            assert await client.token() == "novo"

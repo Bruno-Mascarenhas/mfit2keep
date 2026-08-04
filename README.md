@@ -8,7 +8,7 @@
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![mypy strict](https://img.shields.io/badge/mypy-strict-2A6DB2)](https://mypy-lang.org/)
 [![uv](https://img.shields.io/badge/deps-uv-DE5FE9?logo=uv&logoColor=white)](https://docs.astral.sh/uv/)
-[![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-163%20passing-brightgreen)](tests/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -34,6 +34,7 @@ checkbox por exercício já no formato certo para a tela do relógio.
 - [Instalação](#instalação)
 - [Configuração](#configuração)
 - [Uso](#uso)
+- [Segredos: tirando a senha do texto puro](#segredos-tirando-a-senha-do-texto-puro)
 - [Segurança: como o app sabe o que é dele](#segurança-como-o-app-sabe-o-que-é-dele)
 - [Por que `gkeepapi` e não a API oficial](#por-que-gkeepapi-e-não-a-api-oficial)
 - [Arquitetura](#arquitetura)
@@ -165,6 +166,37 @@ Rodar `sync` outra vez **não duplica** as notas: o app guarda o vínculo entre 
 Se o treino não mudou, a nota nem é tocada. Se mudou, os exercícios que continuam na ficha
 **mantêm o checkbox marcado** — dá para sincronizar no meio do treino sem perder o progresso.
 
+## Segredos: tirando a senha do texto puro
+
+Por padrão a senha do MFIT fica em texto puro no `.env`. Se o seu disco não tem criptografia
+(a maioria dos desktops Linux não tem), isso significa que **qualquer cópia do disco entrega a
+credencial**: backup que subiu para a nuvem, notebook perdido, ou um SSD devolvido em garantia.
+
+```bash
+mfit2keep segredos status              # onde cada segredo está hoje
+mfit2keep segredos proteger --escrever # cifra e reescreve o .env
+```
+
+O `proteger` usa o [`systemd-creds`](https://www.freedesktop.org/software/systemd/man/systemd-creds.html)
+no escopo do usuário, que amarra a chave ao **TPM2 desta placa**. O `.env` fica assim:
+
+```dotenv
+MFIT_PASSWORD_ENC=70rBNnmpSA6n22iJf58WXSAAAAABAAAADAAAABAAAACUiIoXv32WLPJcrlAAAA...
+```
+
+O blob é inútil em qualquer outra máquina, e o app decifra sozinho — **sem prompt, então continua
+funcionando em cron**. O segredo nunca passa por `argv` (visível no `ps`), só por stdin.
+
+> [!WARNING]
+> Isto protege o **dado em repouso**, não a execução. Um programa malicioso rodando com o seu
+> usuário simplesmente chama `systemd-creds decrypt`, igual ao app. Nenhuma alternativa
+> (keyring, sops, age, gpg-agent destravado) muda isso — quem tem o seu UID tem os seus segredos.
+> O ganho real é: disco roubado, backup vazado e `git add -f` acidental deixam de ser catástrofe.
+
+Como a chave depende do TPM desta placa, **guarde a senha num gerenciador**: reinstalar o sistema,
+trocar a placa ou limpar o TPM exige redigitar. Sem `systemd-creds` na máquina, o master token
+continua no keyring do sistema e o comando avisa em vez de fingir que cifrou.
+
 ## Segurança: como o app sabe o que é dele
 
 Toda nota criada recebe o label **`mfit2keep`** no Keep (e um carimbo no rodapé, no destino local).
@@ -209,6 +241,9 @@ src/mfit2keep/
 ├── render.py         # Workout       →  ChecklistNote (formato do relógio)
 ├── models.py         # domínio puro, sem dependência de destino
 ├── keep_auth.py      # master token: troca, keyring, fallback em arquivo
+├── secrets_store.py  # cifragem dos segredos com systemd-creds (TPM2)
+├── secure_io.py      # escrita 0600 atômica + trava entre processos
+├── matching.py       # casa itens antigos/novos sem perder o que foi marcado
 ├── destinations/
 │   ├── base.py       # interface NoteDestination + marcação
 │   ├── keep.py       # Google Keep via gkeepapi
@@ -238,7 +273,7 @@ Mapeada a partir do bundle do SPA. Autenticação é `authorization: <jwt>` — 
 ## Desenvolvimento
 
 ```bash
-pytest              # 88 testes
+pytest              # 163 testes
 ruff check src tests
 ruff format src tests
 mypy                # strict

@@ -127,3 +127,61 @@ def test_exercise_without_name_gets_placeholder() -> None:
     session = {"id": 1, "nome": "X", "exercs": [group(anonymous)]}
 
     assert parse_session(session).exercises[0].name == "Exercício sem nome"
+
+
+def test_series_columns_stay_aligned() -> None:
+    session = {
+        "id": 1,
+        "nome": "X",
+        "exercs": [
+            group(
+                exercise(
+                    "Supino",
+                    serie(repeticao="12", carga="20", intervalText="60"),
+                    serie(repeticao="10", carga="30", intervalText="60"),
+                )
+            )
+        ],
+    }
+
+    supino = parse_session(session).exercises[0]
+
+    assert supino.reps == "12 / 10"
+    assert supino.load == "20kg / 30kg"
+    # Coluna constante encolhe: mostrar "60s" uma vez não é ambíguo.
+    assert supino.rest == "60s"
+
+
+def test_missing_value_in_a_varying_column_keeps_its_slot() -> None:
+    session = {
+        "id": 1,
+        "nome": "X",
+        "exercs": [
+            group(
+                exercise(
+                    "Supino",
+                    serie(repeticao="12", carga="0"),
+                    serie(repeticao="10", carga="30"),
+                )
+            )
+        ],
+    }
+
+    supino = parse_session(session).exercises[0]
+
+    # Sem o "—", a carga "30kg" pareceria valer para a primeira série.
+    assert supino.reps == "12 / 10"
+    assert supino.load == "— / 30kg"
+
+
+def test_identical_series_collapse_to_one_row() -> None:
+    session = {
+        "id": 1,
+        "nome": "X",
+        "exercs": [group(exercise("Supino", serie(), serie(), serie()))],
+    }
+
+    supino = parse_session(session).exercises[0]
+
+    assert supino.reps == "3x12 a 15"
+    assert supino.rest == "45s"
