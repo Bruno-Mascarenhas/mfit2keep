@@ -24,14 +24,32 @@ checkbox é grande o bastante para tocar suado.
 O `mfit2keep` lê a sua rotina direto da API do MFIT e cria **uma nota por dia de treino**, com um
 checkbox por exercício já no formato certo para a tela do relógio.
 
+**Não precisa saber usar terminal.** Depois de [instalar](#instalação), um comando abre uma tela
+guiada que leva do login até as notas prontas no Keep:
+
 <div align="center">
-  <img src="docs/preview.svg" alt="Saída do comando preview no terminal" width="720">
+  <table>
+    <tr>
+      <td width="45%" valign="top" align="center">
+        <img src="docs/step1.png" width="100%"
+             alt="Passo 1 do painel: e-mail e senha do MFIT e a conta Google">
+        <br><sub><b>1.</b> preencha a conta — o número fica verde quando salva</sub>
+      </td>
+      <td width="55%" valign="top" align="center">
+        <img src="docs/steps234.png" width="100%"
+             alt="Passos 2 a 4 do painel: liberar o Google Keep, proteger a senha e criar as notas">
+        <br><sub><b>2 a 4.</b> a receita do Keep, proteger a senha e criar as notas</sub>
+      </td>
+    </tr>
+  </table>
 </div>
 
+```bash
+mfit2keep painel
+```
+
 > [!TIP]
-> **Não usa terminal?** Depois de instalar, rode `mfit2keep painel` — abre uma tela no navegador
-> que faz tudo (login, Keep, criar as notas) sem você digitar mais nenhum comando.
-> Veja [Painel no navegador](#painel-no-navegador).
+> Prefere linha de comando? Tudo que a tela faz também está na CLI — veja [Uso](#uso).
 
 ---
 
@@ -159,7 +177,9 @@ Para quem não quer saber de linha de comando:
 mfit2keep painel
 ```
 
-Abre o navegador sozinho, numa tela com quatro passos numerados:
+Abre o navegador sozinho, numa tela com quatro passos numerados — as telas estão no topo desta
+página. O fluxo é este:
+
 
 ```mermaid
 flowchart TB
@@ -206,7 +226,7 @@ mfit2keep limpar --destino keep
 ```
 
 <div align="center">
-  <img src="docs/sync.svg" alt="Saída do comando sync no terminal" width="720">
+  <img src="docs/preview.svg" alt="Saída do comando preview no terminal" width="720">
 </div>
 
 ### Comandos
@@ -248,6 +268,10 @@ Se o treino não mudou, a nota nem é tocada. Se mudou, os exercícios que conti
 
 O casamento é pelo **nome do exercício**, não pela linha inteira: renumerar a ficha ou mudar a
 carga prescrita não zera o que você já marcou.
+
+<div align="center">
+  <img src="docs/sync.svg" alt="Sync mostrando notas sem mudança na segunda execução" width="720">
+</div>
 
 ## Sair do MFIT: o formato neutro
 
