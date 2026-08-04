@@ -128,3 +128,63 @@ def test_env_file_falls_back_to_xdg_outside_a_checkout(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
 
     assert env_file() == tmp_path / "xdg-config" / "mfit2keep" / ".env"
+
+
+def test_replace_env_vars_removes_the_plaintext_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_env(tmp_path, "MFIT_EMAIL=eu@x.com\nMFIT_PASSWORD=segredo\n", monkeypatch)
+
+    config.replace_env_vars(["MFIT_PASSWORD_ENC=blob"])
+
+    content = path.read_text(encoding="utf-8")
+    assert "segredo" not in content
+    assert "MFIT_PASSWORD_ENC=blob" in content
+    assert "MFIT_EMAIL=eu@x.com" in content
+
+
+def test_replace_env_vars_also_removes_an_exported_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Sem tratar `export`, o segredo em texto puro sobrevive à "proteção".
+    path = write_env(tmp_path, "export MFIT_PASSWORD=segredo\n", monkeypatch)
+
+    config.replace_env_vars(["MFIT_PASSWORD_ENC=blob"])
+
+    assert "segredo" not in path.read_text(encoding="utf-8")
+
+
+def test_replace_env_vars_keeps_comments_and_blank_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = "# minhas notas\n\nMFIT_EMAIL=eu@x.com\n# MFIT_TOKEN=colar aqui\nMFIT_PASSWORD=s\n"
+    path = write_env(tmp_path, original, monkeypatch)
+
+    config.replace_env_vars(["MFIT_PASSWORD_ENC=blob"])
+
+    content = path.read_text(encoding="utf-8")
+    assert "# minhas notas" in content
+    assert "# MFIT_TOKEN=colar aqui" in content
+
+
+def test_replace_env_vars_creates_the_file_when_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MFIT2KEEP_ENV_FILE", str(tmp_path / "novo" / ".env"))
+
+    path = config.replace_env_vars(["MFIT_PASSWORD_ENC=blob"])
+
+    assert path.read_text(encoding="utf-8") == "MFIT_PASSWORD_ENC=blob\n"
+
+
+def test_writing_the_env_does_not_tighten_an_existing_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projeto = tmp_path / "projeto"
+    projeto.mkdir(mode=0o755)
+    write_env(projeto, "MFIT_PASSWORD=segredo\n", monkeypatch)
+
+    config.replace_env_vars(["MFIT_PASSWORD_ENC=blob"])
+
+    # Apertar a raiz do repositório para 0700 é efeito colateral, não segurança.
+    assert projeto.stat().st_mode & 0o777 == 0o755

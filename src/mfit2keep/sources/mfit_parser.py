@@ -23,6 +23,34 @@ from mfit2keep.models import Exercise, Workout
 #: ``carga`` vem como "0" quando o professor não prescreveu peso.
 _EMPTY_LOAD = {"", "0", "0.0", "-"}
 
+#: Uma série vira uma linha (repetições, carga, intervalo); as colunas abaixo
+#: dão nome aos índices para não precisar decorar a ordem da tupla.
+type SeriesRow = tuple[str | None, str | None, str | None]
+REPS_COLUMN = 0
+LOAD_COLUMN = 1
+REST_COLUMN = 2
+
+
+def _as_whole_number(value: Any) -> str | None:
+    """Número inteiro como texto, ou ``None`` se não for número."""
+    try:
+        return str(int(value))
+    except TypeError, ValueError:
+        return None
+
+
+def _sort_key(value: Any) -> tuple[int, float]:
+    """Ordena tolerando ``null`` e texto no campo de ordem.
+
+    A API já mandou ``diaTipo`` nulo; comparar ``None`` com ``int`` derrubaria
+    o sync inteiro, e a ordem dos dias não vale um comando abortado. O que não
+    é número vai para o fim, mantendo a ordem relativa.
+    """
+    try:
+        return (0, float(value))
+    except TypeError, ValueError:
+        return (1, 0.0)
+
 
 def day_letter(dia_tipo: Any) -> str | None:
     """diaTipo 1..26 -> "A".."Z". Fora disso, sem letra."""
@@ -34,7 +62,15 @@ def day_letter(dia_tipo: Any) -> str | None:
 
 
 def _clean(value: Any) -> str | None:
-    text = str(value).strip() if value is not None else ""
+    """Normaliza texto da API para caber numa linha de checkbox.
+
+    A quebra de linha some de propósito: no Markdown ela cortaria o item ao
+    meio, e no Keep viraria um item novo sem checkbox — em ambos os casos a
+    marcação do usuário se perderia na ressincronização seguinte.
+    """
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
     return text or None
 
 
@@ -49,8 +85,10 @@ def _rest(serie: dict[str, Any]) -> str | None:
     """Cardio vem com ``intervalText`` "0" — sem intervalo, não vale poluir a nota."""
     text = _clean(serie.get("intervalText"))
     if not text:
+        # O campo devia ser numérico, mas a API já mandou texto ("1:30") —
+        # nesse caso vale mais mostrar o que veio do que derrubar o sync.
         seconds = serie.get("intervalSeconds") or serie.get("intervalo")
-        text = str(int(seconds)) if seconds else None
+        text = _as_whole_number(seconds) or _clean(seconds)
     if not text or text in _EMPTY_LOAD:
         return None
     return f"{text}s" if text.isdigit() else text
@@ -64,16 +102,15 @@ def _reps(serie: dict[str, Any]) -> str | None:
     return None
 
 
-def _join(parts: list[str | None], sep: str) -> str | None:
-    seen = [p for p in parts if p]
-    if not seen:
+def _join(parts: list[str | None], separator: str) -> str | None:
+    """Junta texto livre de várias séries, sem repetir o que é igual."""
+    present = [part for part in parts if part]
+    if not present:
         return None
-    # Séries idênticas (o caso comum) viram uma só entrada.
-    unique = list(dict.fromkeys(seen))
-    return sep.join(unique)
+    return separator.join(dict.fromkeys(present))
 
 
-def _column(rows: list[tuple[str | None, ...]], index: int) -> str | None:
+def _column(series_rows: list[SeriesRow], column: int) -> str | None:
     """Formata uma coluna das séries preservando a leitura posicional.
 
     Deduplicar cada campo por conta própria desalinha a ficha: com duas séries
@@ -82,7 +119,7 @@ def _column(rows: list[tuple[str | None, ...]], index: int) -> str | None:
     encolhe quando é constante — aí mostrar uma vez é inequívoco. Do contrário
     ela mantém uma entrada por série, com "—" nos buracos.
     """
-    values = [row[index] for row in rows]
+    values = [row[column] for row in series_rows]
     if not any(values):
         return None
     if len(set(values)) == 1:
@@ -90,38 +127,40 @@ def _column(rows: list[tuple[str | None, ...]], index: int) -> str | None:
     return " / ".join(value or "—" for value in values)
 
 
-def parse_exercise(raw: dict[str, Any], *, group: str | None = None) -> Exercise:
-    series: list[dict[str, Any]] = raw.get("series") or []
-    rows: list[tuple[str | None, ...]] = [
-        (_reps(s), _load(s.get("carga")), _rest(s)) for s in series
+def parse_exercise(raw_exercise: dict[str, Any], *, combined_group: str | None = None) -> Exercise:
+    all_series: list[dict[str, Any]] = raw_exercise.get("series") or []
+    series_rows: list[SeriesRow] = [
+        (_reps(series), _load(series.get("carga")), _rest(series)) for series in all_series
     ]
     # Séries idênticas (o caso comum) viram uma linha só, tudo-ou-nada.
-    if len(set(rows)) == 1:
-        rows = rows[:1]
+    if len(set(series_rows)) == 1:
+        series_rows = series_rows[:1]
 
     return Exercise(
-        name=_clean(raw.get("name")) or "Exercício sem nome",
-        reps=_column(rows, 0),
-        load=_column(rows, 1),
-        rest=_column(rows, 2),
-        notes=_join([_clean(s.get("obs")) for s in series], " · "),
-        group=group,
+        name=_clean(raw_exercise.get("name")) or "Exercício sem nome",
+        reps=_column(series_rows, REPS_COLUMN),
+        load=_column(series_rows, LOAD_COLUMN),
+        rest=_column(series_rows, REST_COLUMN),
+        notes=_join([_clean(series.get("obs")) for series in all_series], " · "),
+        group=combined_group,
     )
 
 
 def parse_session(session: dict[str, Any], *, day: dict[str, Any] | None = None) -> Workout:
     """Converte o JSON de um dia de treino em :class:`Workout`."""
     day = day or {}
-    groups: list[dict[str, Any]] = session.get("exercs") or []
-    groups = sorted(groups, key=lambda g: g.get("order", 0))
+    raw_groups: list[dict[str, Any]] = session.get("exercs") or []
+    raw_groups = sorted(raw_groups, key=lambda group: _sort_key(group.get("order", 0)))
 
     exercises: list[Exercise] = []
-    for index, group in enumerate(groups):
-        members: list[dict[str, Any]] = group.get("exercises") or []
+    for position, raw_group in enumerate(raw_groups):
+        members: list[dict[str, Any]] = raw_group.get("exercises") or []
         # Grupo com mais de um exercício = série combinada; marcamos para o render.
-        key = f"g{index}" if len(members) > 1 else None
-        members = sorted(members, key=lambda e: e.get("ordenacao", 0))
-        exercises.extend(parse_exercise(member, group=key) for member in members)
+        combined_group = f"g{position}" if len(members) > 1 else None
+        members = sorted(members, key=lambda member: _sort_key(member.get("ordenacao", 0)))
+        exercises.extend(
+            parse_exercise(member, combined_group=combined_group) for member in members
+        )
 
     name = _clean(session.get("nome")) or _clean(day.get("nome")) or "Treino"
     return Workout(
@@ -136,7 +175,9 @@ def parse_session(session: dict[str, Any], *, day: dict[str, Any] | None = None)
 def parse_routine(routine: dict[str, Any], sessions: dict[str, dict[str, Any]]) -> list[Workout]:
     """Junta a rotina com as sessões já buscadas, preservando a ordem dos dias."""
     days: list[dict[str, Any]] = routine.get("workouts") or []
-    days = sorted(days, key=lambda d: (d.get("diaTipo", 0), d.get("ordenacao", 0)))
+    days = sorted(
+        days, key=lambda day: (_sort_key(day.get("diaTipo", 0)), _sort_key(day.get("ordenacao", 0)))
+    )
 
     workouts: list[Workout] = []
     for day in days:

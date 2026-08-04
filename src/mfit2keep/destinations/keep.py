@@ -260,4 +260,4 @@ def _url(node: Any) -> str | None:
 
 def _load_note_map() -> dict[str, str]:
     loaded = read_secret_json(NOTE_MAP) or {}
-    return {str(k): str(v) for k, v in loaded.items()}
+    return {str(external_id): str(note_id) for external_id, note_id in loaded.items()}

@@ -25,15 +25,25 @@ SECRET_DIR_MODE = 0o700
 
 
 def ensure_private_dir(path: Path) -> None:
-    """Cria o diretório já privado e corrige a permissão se ele já existia."""
+    """Cria o diretório privado; se já existia e está frouxo, aperta.
+
+    Só deve ser chamado para diretório que é NOSSO (o ``.state/``). Apertar um
+    diretório de terceiro — a raiz do repositório, por exemplo, que é o pai do
+    ``.env`` — é efeito colateral, não segurança.
+    """
     path.mkdir(parents=True, exist_ok=True, mode=SECRET_DIR_MODE)
     if path.stat().st_mode & 0o077:
         path.chmod(SECRET_DIR_MODE)
 
 
 def write_secret(path: Path, content: str) -> None:
-    """Grava ``content`` em ``path`` sem nunca expor o conteúdo a terceiros."""
-    ensure_private_dir(path.parent)
+    """Grava ``content`` em ``path`` sem nunca expor o conteúdo a terceiros.
+
+    Cria o diretório pai se faltar, mas **não mexe na permissão de um diretório
+    que já existe**: o arquivo nasce 0600, e isso é o que protege o segredo.
+    """
+    if not path.parent.exists():
+        path.parent.mkdir(parents=True, mode=SECRET_DIR_MODE)
 
     # O pid no nome evita colisão entre duas execuções simultâneas.
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -51,6 +61,8 @@ def write_secret(path: Path, content: str) -> None:
 
 
 def write_secret_json(path: Path, data: dict[str, Any]) -> None:
+    """Estado nosso (``.state/``): aqui o diretório privado é responsabilidade nossa."""
+    ensure_private_dir(path.parent)
     write_secret(path, json.dumps(data))
 
 

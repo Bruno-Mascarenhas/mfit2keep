@@ -112,15 +112,28 @@ def replace_env_vars(new_lines: list[str]) -> Path:
     """
     path = env_file()
     replaced = {line.split("=", 1)[0] for line in new_lines}
-    dropped = {name.removesuffix("_ENC") for name in replaced}
+    obsolete = replaced | {name.removesuffix("_ENC") for name in replaced}
 
-    kept = [
-        line
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.split("=", 1)[0].strip() not in dropped | replaced
-    ]
+    previous = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    kept = [line for line in previous if _env_var_of(line) not in obsolete]
+
     write_secret(path, "\n".join([*kept, *new_lines]) + "\n")
     return path
+
+
+def _env_var_of(line: str) -> str | None:
+    """Nome da variável definida na linha, ou ``None`` se ela não define nada.
+
+    Comentário e linha em branco devolvem ``None`` e por isso sobrevivem. O
+    ``export`` é reconhecido porque, sem isso, um ``export MFIT_PASSWORD=...``
+    ficaria no arquivo depois de cifrar — o segredo em texto puro justamente
+    onde o usuário achou que tinha saído.
+    """
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        return None
+    name = stripped.split("=", 1)[0].strip()
+    return name.removeprefix("export ").strip() or None
 
 
 def load_settings() -> Settings:

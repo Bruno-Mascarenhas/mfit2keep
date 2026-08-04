@@ -65,8 +65,8 @@ class Backend(StrEnum):
     ABSENT = "ausente"
 
 
-def credential_name(key: str) -> str:
-    return f"{NAME_PREFIX}.{key.lower()}"
+def credential_name(secret_key: str) -> str:
+    return f"{NAME_PREFIX}.{secret_key.lower()}"
 
 
 def systemd_creds_available() -> bool:
@@ -80,23 +80,23 @@ def systemd_creds_available() -> bool:
     return True
 
 
-def encrypt(key: str, value: str) -> str:
+def encrypt(secret_key: str, value: str) -> str:
     """Devolve o blob base64 de ``value``, atado ao TPM2 e ao nome.
 
     O segredo entra por stdin: em argv ele apareceria no ``ps`` de qualquer
     usuário da máquina.
     """
     return _run(
-        ["systemd-creds", "encrypt", "--user", f"--name={credential_name(key)}", "-", "-"],
+        ["systemd-creds", "encrypt", "--user", f"--name={credential_name(secret_key)}", "-", "-"],
         value,
         acao="cifrar",
     ).replace("\n", "")
 
 
-def decrypt(key: str, blob: str) -> str:
+def decrypt(secret_key: str, blob: str) -> str:
     """Recupera o segredo a partir do blob. O blob em si não é sigiloso."""
     return _run(
-        ["systemd-creds", "decrypt", "--user", f"--name={credential_name(key)}", "-", "-"],
+        ["systemd-creds", "decrypt", "--user", f"--name={credential_name(secret_key)}", "-", "-"],
         blob,
         acao="decifrar",
     )
@@ -124,14 +124,14 @@ def _run(command: list[str], stdin: str, *, acao: str) -> str:
     return completed.stdout
 
 
-def resolve(key: str, *, plaintext: str | None, encrypted: str | None) -> str | None:
+def resolve(secret_key: str, *, plaintext: str | None, encrypted: str | None) -> str | None:
     """Valor final do segredo, preferindo a forma cifrada.
 
     O cifrado ganha para que deixar a variável antiga preenchida por engano não
     faça o app silenciosamente voltar a usar texto puro.
     """
     if encrypted:
-        return decrypt(key, encrypted)
+        return decrypt(secret_key, encrypted)
     return plaintext
 
 

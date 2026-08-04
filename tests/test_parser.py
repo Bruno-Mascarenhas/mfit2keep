@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from mfit2keep.parser import day_letter, parse_routine, parse_session
+from mfit2keep.sources.mfit_parser import day_letter, parse_routine, parse_session
 from tests.conftest import exercise, group, serie
 
 
@@ -184,3 +184,39 @@ def test_identical_series_collapse_to_one_row() -> None:
 
     assert supino.reps == "3x12 a 15"
     assert supino.rest == "45s"
+
+
+def test_null_day_type_does_not_break_the_sort() -> None:
+    # A API já mandou diaTipo nulo; comparar None com int derrubaria o sync.
+    routine = {"workouts": [{"id": 1, "diaTipo": None}, {"id": 2, "diaTipo": 1}]}
+    sessions = {"1": {"id": 1, "nome": "Sem dia"}, "2": {"id": 2, "nome": "Dia A"}}
+
+    workouts = parse_routine(routine, sessions)
+
+    assert {w.name for w in workouts} == {"Sem dia", "Dia A"}
+
+
+def test_valid_day_order_is_still_respected() -> None:
+    routine = {"workouts": [{"id": 2, "diaTipo": 2}, {"id": 1, "diaTipo": 1}]}
+    sessions = {"1": {"id": 1, "nome": "Primeiro"}, "2": {"id": 2, "nome": "Segundo"}}
+
+    assert [w.name for w in parse_routine(routine, sessions)] == ["Primeiro", "Segundo"]
+
+
+def test_non_numeric_interval_is_shown_instead_of_crashing() -> None:
+    session = {
+        "id": 1,
+        "nome": "X",
+        "exercs": [group(exercise("Supino", serie(intervalText="", intervalSeconds="1:30")))],
+    }
+
+    assert parse_session(session).exercises[0].rest == "1:30"
+
+
+def test_line_break_in_the_name_is_flattened() -> None:
+    # Quebra de linha cortaria o item do Markdown ao meio e viraria um item sem
+    # checkbox no Keep — nos dois casos a marcação do usuário se perderia.
+    anonymous = exercise("") | {"name": "Supino\nInclinado"}
+    session = {"id": 1, "nome": "X", "exercs": [group(anonymous)]}
+
+    assert parse_session(session).exercises[0].name == "Supino Inclinado"

@@ -62,4 +62,4 @@ def workout_to_note(workout: Workout, options: RenderOptions | None = None) -> C
 def routine_to_notes(
     workouts: list[Workout], options: RenderOptions | None = None
 ) -> list[ChecklistNote]:
-    return [workout_to_note(w, options) for w in workouts]
+    return [workout_to_note(workout, options) for workout in workouts]

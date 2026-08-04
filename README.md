@@ -9,7 +9,7 @@
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![mypy strict](https://img.shields.io/badge/mypy-strict-2A6DB2)](https://mypy-lang.org/)
 [![uv](https://img.shields.io/badge/deps-uv-DE5FE9?logo=uv&logoColor=white)](https://docs.astral.sh/uv/)
-[![Tests](https://img.shields.io/badge/tests-166%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-205%20passing-brightgreen)](tests/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -35,6 +35,7 @@ checkbox por exercício já no formato certo para a tela do relógio.
 - [Instalação](#instalação)
 - [Configuração](#configuração)
 - [Uso](#uso)
+- [Sair do MFIT: o formato neutro](#sair-do-mfit-o-formato-neutro)
 - [Segredos: tirando a senha do texto puro](#segredos-tirando-a-senha-do-texto-puro)
 - [Segurança: como o app sabe o que é dele](#segurança-como-o-app-sabe-o-que-é-dele)
 - [Por que `gkeepapi` e não a API oficial](#por-que-gkeepapi-e-não-a-api-oficial)
@@ -46,16 +47,25 @@ checkbox por exercício já no formato certo para a tela do relógio.
 
 ```mermaid
 flowchart LR
-    A["API do MFIT<br/>api.mfitpersonal.com.br"] -->|rotina + dias| B["parser"]
-    B -->|Workout / Exercise| C["render"]
-    C -->|ChecklistNote| D{"destino"}
-    D --> E["Google Keep<br/>checkbox nativo"]
-    D --> F["Markdown local<br/>.md com - [ ]"]
-    E -.->|app Wear OS| G["⌚ smartwatch"]
+    subgraph fontes["fontes (WorkoutSource)"]
+        M["MFIT Personal<br/>(rede)"]
+        J["arquivo JSON<br/>formato neutro"]
+    end
+    fontes --> W["Workout / Exercise"]
+    W --> R["render"]
+    W -.->|exportar| J
+    R --> N["ChecklistNote"]
+    subgraph destinos["destinos (NoteDestination)"]
+        K["Google Keep<br/>checkbox nativo"]
+        L["Markdown local"]
+    end
+    N --> destinos
+    K -.->|app Wear OS| S["⌚ smartwatch"]
 ```
 
-O modelo de domínio (`Workout`, `Exercise`, `ChecklistNote`) não sabe nada nem do MFIT nem do
-Keep. Trocar o destino é implementar uma interface de dois métodos.
+**As duas pontas são plugáveis.** No meio fica `Workout`/`Exercise`, que não conhece nem o MFIT
+nem o Keep — trocar qualquer lado é implementar uma interface, sem tocar em render nem em
+matching. É o mesmo `Workout` que sai pelo `exportar`, então dá para largar o MFIT sem largar o app.
 
 ## Instalação
 
@@ -123,7 +133,7 @@ conta e não expira, então nunca comite nem coloque em log.
 ## Uso
 
 ```bash
-# Quais rotinas existem na sua conta
+# Quais rotinas existem na fonte
 mfit2keep rotinas
 
 # Conferir no terminal antes de subir qualquer coisa
@@ -166,6 +176,41 @@ que sobra quando o texto é truncado.
 Rodar `sync` outra vez **não duplica** as notas: o app guarda o vínculo entre o treino e a nota.
 Se o treino não mudou, a nota nem é tocada. Se mudou, os exercícios que continuam na ficha
 **mantêm o checkbox marcado** — dá para sincronizar no meio do treino sem perder o progresso.
+
+## Sair do MFIT: o formato neutro
+
+O `mfit2keep` não te prende ao MFIT. `exportar` grava os treinos num JSON que não pertence a
+serviço nenhum, e esse JSON volta a ser uma fonte válida:
+
+```bash
+# MFIT -> arquivo (uma vez)
+mfit2keep exportar 12345678 -o treinos.json
+
+# arquivo -> Keep (sem conta, sem rede, sem MFIT)
+mfit2keep sync --fonte arquivo --arquivo treinos.json --destino keep
+```
+
+```json
+{
+  "format": "mfit2keep/workouts",
+  "version": 1,
+  "workouts": [
+    {
+      "id": "156902750", "name": "Bíceps/Triceps", "letter": "A",
+      "exercises": [
+        { "name": "Rosca Direta", "reps": "3x12", "load": "20kg", "rest": "45s" }
+      ]
+    }
+  ]
+}
+```
+
+Qualquer ferramenta que produza esse JSON já funciona como fonte — planilha, script, outro app.
+Nenhum campo é obrigatório além de `name`, e o `version` faz um arquivo de versão futura falhar
+com mensagem clara em vez de ser lido errado em silêncio.
+
+Para uma fonte nativa nova (outro app de treino), o caminho é implementar `WorkoutSource` — dois
+métodos — em `sources/`. Render, matching, marcação e destinos continuam iguais.
 
 ## Segredos: tirando a senha do texto puro
 
@@ -237,18 +282,23 @@ app OAuth precisa estar **"In production"** ou o refresh token morre a cada 7 di
 
 ```
 src/mfit2keep/
-├── mfit.py           # cliente async da API do MFIT (httpx + TaskGroup)
-├── parser.py         # JSON do MFIT  →  Workout / Exercise
+├── models.py         # Workout / Exercise / ChecklistNote — o meio, sem dependência
+├── interchange.py    # formato neutro (JSON) — o pivô entre fonte e destino
 ├── render.py         # Workout       →  ChecklistNote (formato do relógio)
-├── models.py         # domínio puro, sem dependência de destino
+├── matching.py       # casa itens antigos/novos sem perder o que foi marcado
+├── sources/          # DE ONDE vêm os treinos
+│   ├── base.py       #   interface WorkoutSource
+│   ├── mfit.py       #   MFIT: junta cliente + parser
+│   ├── mfit_api.py   #   cliente async da API (httpx + TaskGroup)
+│   ├── mfit_parser.py#   JSON do MFIT  →  Workout
+│   └── workout_file.py #  arquivo no formato neutro
+├── destinations/     # PARA ONDE vão as notas
+│   ├── base.py       #   interface NoteDestination + marcação
+│   ├── keep.py       #   Google Keep via gkeepapi
+│   └── local.py      #   arquivos Markdown
 ├── keep_auth.py      # master token: troca, keyring, fallback em arquivo
 ├── secrets_store.py  # cifragem dos segredos com systemd-creds (TPM2)
 ├── secure_io.py      # escrita 0600 atômica + trava entre processos
-├── matching.py       # casa itens antigos/novos sem perder o que foi marcado
-├── destinations/
-│   ├── base.py       # interface NoteDestination + marcação
-│   ├── keep.py       # Google Keep via gkeepapi
-│   └── local.py      # arquivos Markdown
 └── cli.py            # Typer + Rich
 ```
 
@@ -274,7 +324,7 @@ Mapeada a partir do bundle do SPA. Autenticação é `authorization: <jwt>` — 
 ## Desenvolvimento
 
 ```bash
-pytest              # 166 testes
+pytest              # 205 testes
 ruff check src tests
 ruff format src tests
 mypy                # strict
