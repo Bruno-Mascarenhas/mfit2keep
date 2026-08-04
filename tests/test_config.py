@@ -1,10 +1,11 @@
 import os
+import sys
 from pathlib import Path
 
 import pytest
 from dotenv import dotenv_values
 
-from mfit2keep import config
+from mfit2keep import config, secure_io
 from mfit2keep.config import ConfigError, Settings, env_file, load_settings, state_dir
 
 
@@ -100,15 +101,39 @@ def test_state_dir_can_be_overridden(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert state_dir() == tmp_path / "estado"
 
 
-def test_state_dir_falls_back_to_xdg_outside_a_checkout(
+def test_state_dir_lands_in_the_user_area_outside_a_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Instalado como pacote, gravar segredo dentro do site-packages seria errado.
+    site_packages = tmp_path / "site-packages"
+    monkeypatch.setattr(config, "_IN_REPO", False)
+    monkeypatch.setattr(config, "PACKAGE_ROOT", site_packages)
+
+    destino = state_dir()
+
+    assert destino.name == "mfit2keep"
+    assert site_packages not in destino.parents
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="XDG só vale no Linux")
+def test_state_dir_honours_xdg_on_linux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config, "_IN_REPO", False)
     monkeypatch.setattr(config, "PACKAGE_ROOT", tmp_path / "site-packages")
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
 
     assert state_dir() == tmp_path / "xdg-state" / "mfit2keep"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="só o Windows usa LOCALAPPDATA")
+def test_state_dir_uses_local_appdata_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # LOCALAPPDATA não sincroniza com o perfil: token de máquina não deve viajar.
+    monkeypatch.setattr(config, "_IN_REPO", False)
+    monkeypatch.setattr(config, "PACKAGE_ROOT", tmp_path / "site-packages")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+
+    assert state_dir() == tmp_path / "Local" / "mfit2keep"
 
 
 def test_existing_legacy_state_dir_is_kept(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -122,13 +147,31 @@ def test_existing_legacy_state_dir_is_kept(tmp_path: Path, monkeypatch: pytest.M
     assert state_dir() == legacy
 
 
-def test_env_file_falls_back_to_xdg_outside_a_checkout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_env_file_lands_in_the_user_area_outside_a_checkout(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(config, "_IN_REPO", False)
+
+    destino = env_file()
+
+    assert destino.name == ".env"
+    assert destino.parent.name == "mfit2keep"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="XDG só vale no Linux")
+def test_env_file_honours_xdg_on_linux(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config, "_IN_REPO", False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
 
     assert env_file() == tmp_path / "xdg-config" / "mfit2keep" / ".env"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="só o Windows usa APPDATA")
+def test_env_file_uses_appdata_on_windows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(config, "_IN_REPO", False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+
+    assert env_file() == tmp_path / "Roaming" / "mfit2keep" / ".env"
 
 
 def test_replace_env_vars_removes_the_plaintext_line(
@@ -178,6 +221,7 @@ def test_replace_env_vars_creates_the_file_when_absent(
     assert path.read_text(encoding="utf-8") == "MFIT_PASSWORD_ENC=blob\n"
 
 
+@pytest.mark.skipif(not secure_io.POSIX, reason="modo de diretório é conceito POSIX")
 def test_writing_the_env_does_not_tighten_an_existing_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

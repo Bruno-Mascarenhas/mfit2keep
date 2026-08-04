@@ -163,12 +163,20 @@ class DpapiBackend(CipherBackend):
     def encrypt(self, secret_key: str, value: str) -> str:
         from mfit2keep import _dpapi
 
-        return _dpapi.protect(value, entropy=credential_name(secret_key))
+        # O erro do ctypes vira SecretsError: quem chama trata um tipo só,
+        # igual ao backend do Linux.
+        try:
+            return _dpapi.protect(value, entropy=credential_name(secret_key))
+        except _dpapi.DpapiError as error:
+            raise SecretsError(f"Não foi possível cifrar com o DPAPI: {error}") from error
 
     def decrypt(self, secret_key: str, blob: str) -> str:
         from mfit2keep import _dpapi
 
-        return _dpapi.unprotect(blob, entropy=credential_name(secret_key))
+        try:
+            return _dpapi.unprotect(blob, entropy=credential_name(secret_key))
+        except _dpapi.DpapiError as error:
+            raise SecretsError(f"Não foi possível decifrar com o DPAPI: {error}") from error
 
 
 class UnavailableBackend(CipherBackend):
