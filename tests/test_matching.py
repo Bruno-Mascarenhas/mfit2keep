@@ -63,3 +63,27 @@ def test_duplicate_names_do_not_share_one_mark() -> None:
 
 def test_empty_state_marks_nothing() -> None:
     assert CheckedState([]).take("1. Supino — 4x10") is False
+
+
+def test_name_containing_the_separator_is_not_truncated() -> None:
+    # Os detalhes usam " · ", nunca " — ", então o corte é pelo último separador.
+    key = item_key("1. Supino — Pegada Fechada — 3x12 · ↺45s")
+
+    assert key == "supino — pegada fechada"
+
+
+def test_variants_of_the_same_exercise_do_not_collide() -> None:
+    fechada = item_key("1. Supino — Pegada Fechada — 3x12 · ↺45s")
+    aberta = item_key("2. Supino — Pegada Aberta — 3x12 · ↺45s")
+
+    # Colidindo, a marca de uma pegada migraria para a outra na ressincronização.
+    assert fechada != aberta
+
+
+def test_marks_survive_renumbering_with_separator_in_the_name() -> None:
+    before = CheckedState(
+        [("1. Supino — Pegada Fechada — 3x12", True), ("2. Supino — Pegada Aberta — 3x12", False)]
+    )
+
+    assert before.take("1. Supino — Pegada Fechada — 3x12 · 20kg") is True
+    assert before.take("2. Supino — Pegada Aberta — 3x12 · 20kg") is False

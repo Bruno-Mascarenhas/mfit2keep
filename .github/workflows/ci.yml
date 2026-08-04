@@ -15,8 +15,13 @@ permissions:
 
 jobs:
   qualidade:
-    name: Lint, tipos e testes
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Um sistema falhando não cancela os outros — a diferença é o que interessa.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v7
@@ -41,10 +46,14 @@ jobs:
       - name: Formatação (ruff)
         run: uv run ruff format --check src tests
 
-      - name: Tipos (mypy strict)
-        run: uv run mypy
+      # O código tem caminho por sistema (fcntl/msvcrt, systemd-creds/DPAPI);
+      # checar um só deixaria a outra metade sem tipo verificado.
+      - name: Tipos (mypy, Linux)
+        run: uv run mypy --platform linux
 
-      # Os testes de systemd-creds se auto-pulam onde o binário não existe,
-      # que é o caso do runner do GitHub.
+      - name: Tipos (mypy, Windows)
+        run: uv run mypy --platform win32
+
+      # Os testes de cifragem local se auto-pulam onde o backend não existe.
       - name: Testes (pytest)
         run: uv run pytest

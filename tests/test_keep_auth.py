@@ -6,7 +6,7 @@ import keyring
 import pytest
 from keyring.errors import KeyringError
 
-from mfit2keep import keep_auth
+from mfit2keep import keep_auth, secure_io
 from mfit2keep.config import Settings
 from mfit2keep.keep_auth import KeepAuthError, KeepCredentials
 
@@ -94,6 +94,7 @@ def test_store_falls_back_to_file_without_keyring(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.filterwarnings("ignore::mfit2keep.keep_auth.KeyringUnavailableWarning")
+@pytest.mark.skipif(not secure_io.POSIX, reason="permissão de arquivo é conceito POSIX")
 def test_token_file_is_not_world_readable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(keyring, "set_password", lambda *_: (_ for _ in ()).throw(KeyringError()))
 

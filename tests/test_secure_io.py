@@ -1,10 +1,15 @@
+import asyncio
 import os
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from mfit2keep import secure_io
 from mfit2keep.secure_io import (
     ensure_private_dir,
+    exclusive_lock,
     is_world_readable,
     read_secret_json,
     write_secret,
@@ -13,13 +18,17 @@ from mfit2keep.secure_io import (
 
 
 @pytest.fixture(autouse=True)
-def permissive_umask() -> object:
-    """umask 0 é o pior caso: sem ele o teste passaria por sorte."""
+def permissive_umask() -> Iterator[None]:
+    """umask 0 é o pior caso: sem ele o teste de modo passaria por sorte."""
+    if not secure_io.POSIX:
+        yield
+        return
     previous = os.umask(0)
     yield
     os.umask(previous)
 
 
+@pytest.mark.skipif(not secure_io.POSIX, reason="modo de arquivo é conceito POSIX")
 def test_secret_file_is_never_world_readable(tmp_path: Path) -> None:
     path = tmp_path / "token.json"
 
@@ -30,6 +39,7 @@ def test_secret_file_is_never_world_readable(tmp_path: Path) -> None:
     assert not is_world_readable(path)
 
 
+@pytest.mark.skipif(not secure_io.POSIX, reason="modo de arquivo é conceito POSIX")
 def test_parent_directory_is_private(tmp_path: Path) -> None:
     path = tmp_path / "estado" / "token.json"
 
@@ -38,6 +48,7 @@ def test_parent_directory_is_private(tmp_path: Path) -> None:
     assert path.parent.stat().st_mode & 0o777 == 0o700
 
 
+@pytest.mark.skipif(not secure_io.POSIX, reason="modo de arquivo é conceito POSIX")
 def test_existing_loose_directory_is_tightened(tmp_path: Path) -> None:
     loose = tmp_path / "estado"
     loose.mkdir(mode=0o755)
@@ -55,13 +66,22 @@ def test_content_round_trips(tmp_path: Path) -> None:
     assert read_secret_json(path) == {"token": "aas_et/abc", "device_id": "dead"}
 
 
-def test_overwrite_keeps_permissions(tmp_path: Path) -> None:
+def test_overwrite_replaces_the_content(tmp_path: Path) -> None:
     path = tmp_path / "token.json"
     write_secret(path, "primeiro")
 
     write_secret(path, "segundo")
 
     assert path.read_text(encoding="utf-8") == "segundo"
+
+
+@pytest.mark.skipif(not secure_io.POSIX, reason="modo de arquivo é conceito POSIX")
+def test_overwrite_keeps_the_restricted_mode(tmp_path: Path) -> None:
+    path = tmp_path / "token.json"
+    write_secret(path, "primeiro")
+
+    write_secret(path, "segundo")
+
     assert path.stat().st_mode & 0o777 == 0o600
 
 
@@ -103,3 +123,58 @@ def test_write_is_atomic_on_failure(tmp_path: Path) -> None:
     # O arquivo anterior continua íntegro e nenhum .tmp sobra.
     assert path.read_text(encoding="utf-8") == "conteudo bom"
     assert [p.name for p in tmp_path.iterdir()] == ["token.json"]
+
+
+async def test_lock_serializes_two_processes(tmp_path: Path) -> None:
+    """A trava é entre processos — subprocesso de verdade, não thread."""
+    alvo = tmp_path / "estado.json"
+    script = tmp_path / "escreve.py"
+    script.write_text(
+        "import sys, time\n"
+        "from pathlib import Path\n"
+        "from mfit2keep.secure_io import exclusive_lock\n"
+        "alvo = Path(sys.argv[1])\n"
+        "with exclusive_lock(alvo):\n"
+        "    atual = alvo.read_text() if alvo.exists() else ''\n"
+        "    time.sleep(0.2)\n"
+        "    alvo.write_text(atual + sys.argv[2])\n",
+        encoding="utf-8",
+    )
+
+    processos = [
+        await asyncio.create_subprocess_exec(sys.executable, str(script), str(alvo), letra)
+        for letra in ("a", "b")
+    ]
+    for processo in processos:
+        assert await processo.wait() == 0
+
+    # Sem a trava, o segundo leria antes do primeiro gravar e sobrescreveria.
+    assert sorted(alvo.read_text(encoding="utf-8")) == ["a", "b"]
+
+
+def test_lock_is_reentrant_across_calls(tmp_path: Path) -> None:
+    alvo = tmp_path / "estado.json"
+
+    with exclusive_lock(alvo):
+        pass
+    with exclusive_lock(alvo):
+        pass  # travar de novo depois de soltar tem que funcionar
+
+
+@pytest.mark.skipif(not secure_io.POSIX, reason="modo POSIX não existe no Windows")
+def test_posix_reports_world_readable(tmp_path: Path) -> None:
+    frouxo = tmp_path / "frouxo.json"
+    frouxo.write_text("{}", encoding="utf-8")
+    frouxo.chmod(0o644)
+
+    assert is_world_readable(frouxo)
+
+
+@pytest.mark.skipif(secure_io.POSIX, reason="só o Windows não inspeciona ACL")
+def test_windows_does_not_claim_to_know_the_acl(tmp_path: Path) -> None:
+    alvo = tmp_path / "token.json"
+    write_secret(alvo, "segredo")
+
+    # Responder False sem olhar a ACL seria dar garantia não verificada;
+    # o contrato é justamente não afirmar nada ali.
+    assert is_world_readable(alvo) is False

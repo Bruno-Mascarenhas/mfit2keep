@@ -37,9 +37,6 @@ class NoteResult:
 class NoteDestination(ABC):
     """Destino capaz de guardar notas com checkboxes."""
 
-    #: Nome curto usado na CLI (``--destino local``).
-    name: str = "base"
-
     @abstractmethod
     async def upsert(self, note: ChecklistNote) -> NoteResult:
         """Cria a nota ou atualiza a existente com o mesmo ``external_id``."""
@@ -68,8 +65,8 @@ class NoteDestination(ABC):
 
     async def __aexit__(
         self,
-        _exc_type: type[BaseException] | None,
-        _exc: BaseException | None,
-        _tb: TracebackType | None,
+        _exception_type: type[BaseException] | None,
+        _exception: BaseException | None,
+        _traceback: TracebackType | None,
     ) -> None:
         await self.aclose()

@@ -12,8 +12,6 @@ prefixo ``Bearer``. O SPA guarda esse mesmo JWT no cookie ``client_token``.
 """
 
 import asyncio
-import json
-from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
@@ -61,9 +59,9 @@ class MfitClient:
 
     async def __aexit__(
         self,
-        _exc_type: type[BaseException] | None,
-        _exc: BaseException | None,
-        _tb: TracebackType | None,
+        _exception_type: type[BaseException] | None,
+        _exception: BaseException | None,
+        _traceback: TracebackType | None,
     ) -> None:
         await self.aclose()
 
@@ -109,8 +107,17 @@ class MfitClient:
         self._store_token(token)
         return token
 
-    async def _forget_token(self) -> None:
+    async def _forget_token(self, rejected_token: str) -> None:
+        """Invalida o token só se ele ainda for o que o chamador usou.
+
+        Os dias do treino são buscados em paralelo: com o token expirado, todos
+        levam 401 quase ao mesmo tempo. Invalidar sem comparar faria cada um
+        descartar o token que o vizinho acabou de renovar, e a conta levaria
+        uma rajada de logins no endpoint de auth a cada expiração.
+        """
         async with self._auth_lock:
+            if self._token != rejected_token:
+                return
             self._token = None
             TOKEN_CACHE.unlink(missing_ok=True)
 
@@ -118,22 +125,24 @@ class MfitClient:
 
     async def _get(self, path: str) -> Json:
         """GET autenticado, refazendo o login uma vez se o token expirou."""
-        response = await self._authenticated_get(path)
+        used_token = await self.token()
+        response = await self._authenticated_get(path, used_token)
 
         if response.status_code in (401, 403):
             # O token vale ~400 dias, mas o professor pode revogar o acesso a qualquer momento.
-            await self._forget_token()
-            response = await self._authenticated_get(path)
+            await self._forget_token(used_token)
+            response = await self._authenticated_get(path, await self.token())
 
         if response.status_code >= 400:
             raise MfitError(f"GET {path} falhou ({response.status_code}): {_message(response)}")
         return response.json()
 
-    async def _authenticated_get(self, path: str) -> httpx.Response:
+    async def _authenticated_get(self, path: str, token: str) -> httpx.Response:
         """GET com backoff: falha transitória de rede não pode abortar o sync.
 
         Só reenvia o que é seguro reenviar — GET é idempotente — e só para
-        erro de transporte, 429 e 5xx. 4xx de verdade sobe na hora.
+        erro de transporte, 429 e 5xx. 4xx de verdade sobe na hora, e o 401
+        fica a cargo de :meth:`_get`, que sabe qual token foi recusado.
         """
         delay = RETRY_INITIAL_DELAY
         last_error: Exception | None = None
@@ -142,7 +151,7 @@ class MfitClient:
             try:
                 response = await self._client.get(
                     f"{self._base_url}{path}",
-                    headers={"authorization": await self.token()},
+                    headers={"authorization": token},
                 )
             except httpx.TransportError as exc:
                 last_error = exc
@@ -175,7 +184,9 @@ class MfitClient:
     async def workout_sessions(self, day_ids: list[int | str]) -> dict[str, Json]:
         """Busca vários dias de uma vez — é aqui que o async paga a conta."""
         async with asyncio.TaskGroup() as group:
-            tasks = {str(i): group.create_task(self.workout_session(i)) for i in day_ids}
+            tasks = {
+                str(day_id): group.create_task(self.workout_session(day_id)) for day_id in day_ids
+            }
         return {day_id: task.result() for day_id, task in tasks.items()}
 
 
@@ -187,24 +198,3 @@ def _message(response: httpx.Response) -> str:
     if isinstance(payload, dict):
         return str(payload.get("message") or payload)[:300]
     return str(payload)[:300]
-
-
-async def dump_raw(settings: Settings, routine_id: int | str | None, out_dir: Path) -> list[Path]:
-    """Salva os payloads crus em disco — usado para inspecionar o formato real."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
-
-    async with MfitClient(settings) as client:
-        payloads: dict[str, Json] = {"workout_all": await client.list_workouts()}
-        if routine_id is not None:
-            routine = await client.workout_details(routine_id)
-            payloads[f"workout_{routine_id}"] = routine
-            day_ids = [d["id"] for d in routine.get("workouts") or [] if d.get("id") is not None]
-            for day_id, session in (await client.workout_sessions(day_ids)).items():
-                payloads[f"session_{day_id}"] = session
-
-    for name, payload in payloads.items():
-        path = out_dir / f"{name}.json"
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        written.append(path)
-    return written

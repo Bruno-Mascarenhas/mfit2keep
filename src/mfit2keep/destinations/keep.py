@@ -15,7 +15,9 @@ Três particularidades moldam este arquivo:
 """
 
 import asyncio
+import contextlib
 import random
+from collections.abc import Callable
 from typing import Any, Protocol
 
 import gkeepapi
@@ -67,8 +69,6 @@ class KeepDestination(NoteDestination):
     sincronizar no meio do treino não apaga o que já foi feito.
     """
 
-    name = "keep"
-
     def __init__(self, credentials: KeepCredentials, *, client: KeepClient | None = None) -> None:
         self._credentials = credentials
         self._client = client
@@ -102,12 +102,19 @@ class KeepDestination(NoteDestination):
         return (await self.upsert_all([note]))[0]
 
     async def upsert_all(self, notes: list[ChecklistNote]) -> list[NoteResult]:
-        keep = await self._keep()
-        applied = await asyncio.to_thread(self._apply_all, keep, notes)
-        # Um sync só para o lote — e antes de montar as URLs, que dependem do
-        # server_id que o Keep atribui na subida.
-        await asyncio.to_thread(self._flush)
+        applied = await self._in_thread(self._apply_all, notes)
         return [NoteResult(note.title, action, _url(node)) for note, action, node in applied]
+
+    async def _in_thread[T, R](self, work: Callable[[KeepClient, T], R], argument: T) -> R:
+        """Roda o trabalho e sobe o lote, tudo fora do loop de eventos.
+
+        O ``gkeepapi`` é síncrono. O ``_flush`` vem sempre logo depois porque as
+        URLs do resultado dependem do ``server_id`` que só existe após a subida.
+        """
+        keep = await self._keep()
+        result = await asyncio.to_thread(work, keep, argument)
+        await asyncio.to_thread(self._flush)
+        return result
 
     def _apply_all(
         self, keep: KeepClient, notes: list[ChecklistNote]
@@ -167,10 +174,7 @@ class KeepDestination(NoteDestination):
     # ----------------------------------------------------------------- purge
 
     async def purge(self, *, archive: bool = False) -> list[NoteResult]:
-        keep = await self._keep()
-        results = await asyncio.to_thread(self._purge_sync, keep, archive)
-        await asyncio.to_thread(self._flush)
-        return results
+        return await self._in_thread(self._purge_sync, archive)
 
     def _purge_sync(self, keep: KeepClient, archive: bool) -> list[NoteResult]:
         label = keep.findLabel(MARKER)
@@ -200,18 +204,19 @@ class KeepDestination(NoteDestination):
                 # Registrado à parte para que a fusão com o disco não o traga de volta.
                 self._forgotten.add(external_id)
 
-    # ----------------------------------------------------------------- close
-
-    async def aclose(self) -> None:
-        return None
-
     def _flush(self) -> None:
         assert self._client is not None
         # O sync vem primeiro: se ele falhar, o mapa não pode registrar um
         # vínculo para uma nota que nunca chegou ao Keep.
         self._client.sync()
-        write_secret_json(STATE_CACHE, self._client.dump())
+
+        # O mapa é insubstituível — perdê-lo faz a execução seguinte criar
+        # notas duplicadas. O cache de estado tem centenas de KB e é o que
+        # estoura primeiro com disco cheio, então vai depois e é best-effort:
+        # ele se regenera sozinho no próximo authenticate.
         self._persist_note_map()
+        with contextlib.suppress(OSError):
+            write_secret_json(STATE_CACHE, self._client.dump())
 
     def _persist_note_map(self) -> None:
         """Funde com o que estiver em disco, sob trava entre processos.
@@ -221,12 +226,15 @@ class KeepDestination(NoteDestination):
         virariam notas duplicadas no Keep.
         """
         with exclusive_lock(NOTE_MAP):
-            merged = {str(k): str(v) for k, v in (read_secret_json(NOTE_MAP) or {}).items()}
+            merged = _load_note_map()
             merged.update(self._note_ids)
             for external_id in self._forgotten:
                 merged.pop(external_id, None)
             write_secret_json(NOTE_MAP, merged)
             self._note_ids = merged
+            # Só depois de gravar: falha de escrita não pode perder o registro
+            # de que estas notas foram removidas.
+            self._forgotten.clear()
 
 
 def _rewrite_items(node: KeepList, title: str, wanted: list[str]) -> None:
@@ -262,4 +270,4 @@ def _url(node: Any) -> str | None:
 
 def _load_note_map() -> dict[str, str]:
     loaded = read_secret_json(NOTE_MAP) or {}
-    return {str(k): str(v) for k, v in loaded.items()}
+    return {str(external_id): str(note_id) for external_id, note_id in loaded.items()}

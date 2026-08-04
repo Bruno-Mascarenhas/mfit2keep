@@ -6,10 +6,10 @@ import httpx
 import pytest
 import respx
 
-from mfit2keep import mfit
 from mfit2keep.config import ConfigError, Settings
-from mfit2keep.mfit import BASE_URL, MfitClient, MfitError
-from mfit2keep.sync import fetch_workouts
+from mfit2keep.sources import mfit_api as mfit
+from mfit2keep.sources.mfit import MfitSource
+from mfit2keep.sources.mfit_api import BASE_URL, MfitClient, MfitError
 from tests.conftest import exercise, group
 
 
@@ -159,7 +159,7 @@ async def test_fetch_workouts_pulls_every_day(settings: Settings, routine: dict[
         )
     )
 
-    workouts = await fetch_workouts(MfitClient(settings), 36318803)
+    workouts = await MfitSource(settings, client=MfitClient(settings)).fetch_workouts("36318803")
 
     # Um GET por dia, todos disparados juntos pelo TaskGroup.
     assert sessions.call_count == 2
@@ -177,7 +177,7 @@ async def test_workout_without_days_is_parsed_as_a_single_session(settings: Sett
         )
     )
 
-    workouts = await fetch_workouts(MfitClient(settings), 7)
+    workouts = await MfitSource(settings, client=MfitClient(settings)).fetch_workouts("7")
 
     assert len(workouts) == 1
     assert workouts[0].name == "Treino avulso"
@@ -282,3 +282,27 @@ async def test_corrupted_token_cache_is_a_cache_miss(
         async with MfitClient(settings) as client:
             # Cache ruim tem que virar login novo, não TypeError.
             assert await client.token() == "novo"
+
+
+@respx.mock
+async def test_expired_token_causes_a_single_relogin_for_the_whole_batch(
+    settings: Settings,
+) -> None:
+    logins = respx.post(f"{BASE_URL}/auth/client").mock(
+        side_effect=lambda _request: httpx.Response(200, json={"token": "renovado"})
+    )
+
+    def by_token(request: httpx.Request) -> httpx.Response:
+        if request.headers["authorization"] == "expirado":
+            return httpx.Response(401)
+        return httpx.Response(200, json={"id": 1, "nome": "X", "exercs": []})
+
+    respx.get(url__startswith=f"{BASE_URL}/v2/client/workout/session").mock(side_effect=by_token)
+
+    expired = Settings(email=settings.email, password=settings.password, token="expirado")
+    async with MfitClient(expired) as client:
+        await client.workout_sessions([1, 2, 3, 4, 5])
+
+    # Os cinco dias levam 401 quase juntos; sem comparar o token recusado, cada
+    # um descartaria o que o vizinho renovou e a conta levaria 5 logins.
+    assert logins.call_count == 1

@@ -1,6 +1,7 @@
 """Interface de linha de comando."""
 
 import asyncio
+import json
 from collections.abc import Coroutine
 from enum import StrEnum
 from pathlib import Path
@@ -11,15 +12,24 @@ from rich.console import Console
 from rich.table import Table
 
 from mfit2keep import keep_auth, secrets_store
-from mfit2keep.config import PROJECT_ROOT, ConfigError, env_file, load_settings
+from mfit2keep.config import (
+    PROJECT_ROOT,
+    ConfigError,
+    Settings,
+    env_file,
+    load_settings,
+    replace_env_vars,
+)
 from mfit2keep.destinations.base import MARKER, NoteDestination, NoteResult
 from mfit2keep.destinations.local import LocalDestinationError, LocalMarkdownDestination
+from mfit2keep.interchange import InterchangeError, workouts_to_dict
 from mfit2keep.keep_auth import KeepAuthError
-from mfit2keep.mfit import MfitClient, MfitError
 from mfit2keep.models import Workout
-from mfit2keep.render import RenderOptions
-from mfit2keep.secure_io import write_secret
-from mfit2keep.sync import build_notes, fetch_workouts, list_routines
+from mfit2keep.render import RenderOptions, routine_to_notes
+from mfit2keep.sources.base import RoutineSummary, SourceError, WorkoutSource
+from mfit2keep.sources.mfit import MfitSource
+from mfit2keep.sources.mfit_api import MfitError
+from mfit2keep.sources.workout_file import WorkoutFileSource
 
 app = typer.Typer(
     add_completion=False,
@@ -28,7 +38,15 @@ app = typer.Typer(
 )
 console = Console()
 
-EXPECTED_ERRORS = (ConfigError, MfitError, KeepAuthError, LocalDestinationError)
+EXPECTED_ERRORS = (
+    ConfigError,
+    MfitError,
+    KeepAuthError,
+    LocalDestinationError,
+    SourceError,
+    InterchangeError,
+    secrets_store.SecretsError,
+)
 
 
 class Destino(StrEnum):
@@ -36,15 +54,29 @@ class Destino(StrEnum):
     KEEP = "keep"
 
 
-RoutineId = Annotated[int, typer.Argument(help="ID da rotina (o número na URL do MFIT).")]
+class Fonte(StrEnum):
+    MFIT = "mfit"
+    ARQUIVO = "arquivo"
+
+
+RoutineId = Annotated[
+    str | None,
+    typer.Argument(help="ID da rotina na fonte (o número na URL, no MFIT). Opcional em arquivo."),
+]
 Numbered = Annotated[bool, typer.Option("--numerar/--sem-numerar")]
 Rest = Annotated[bool, typer.Option("--intervalo/--sem-intervalo")]
 Load = Annotated[bool, typer.Option("--carga/--sem-carga")]
 Width = Annotated[int, typer.Option("--largura", help="Corta a linha; 0 = sem corte.")]
+DestinationOpt = Annotated[Destino, typer.Option("--destino", "-d")]
+SourceOpt = Annotated[Fonte, typer.Option("--fonte", "-f", help="De onde vêm os treinos.")]
+SourceFile = Annotated[
+    Path | None, typer.Option("--arquivo", help="JSON de treinos, para --fonte arquivo.")
+]
+OutDir = Annotated[Path, typer.Option("--saida", "-o", help="Só para --destino local.")]
 
 
-def _fail(exc: BaseException) -> NoReturn:
-    console.print(f"[red]{exc}[/]")
+def _fail(error: BaseException) -> NoReturn:
+    console.print(f"[red]{error}[/]")
     raise typer.Exit(code=1) from None
 
 
@@ -52,21 +84,40 @@ def _run[T](coro: Coroutine[Any, Any, T]) -> T:
     """Executa a corrotina e transforma erro esperado em mensagem limpa."""
     try:
         return asyncio.run(coro)
-    except EXPECTED_ERRORS as exc:
-        _fail(exc)
+    except EXPECTED_ERRORS as error:
+        _fail(error)
     except BaseExceptionGroup as group:
         # O TaskGroup que busca os dias em paralelo embrulha a exceção original;
         # sem desembrulhar, o usuário veria um traceback de ExceptionGroup.
-        expected, _ = group.split(EXPECTED_ERRORS)
-        if expected is None:
+        expected, unexpected = group.split(EXPECTED_ERRORS)
+        # Só trata quando o grupo INTEIRO é esperado: um bug de verdade ou um
+        # Ctrl+C viajando junto não pode ser escondido pela mensagem amigável.
+        if unexpected is not None or expected is None:
             raise
         _fail(expected.exceptions[0])
+
+
+def _print_results(results: list[NoteResult]) -> None:
+    """Tabela do que aconteceu com cada nota — igual no `sync` e no `limpar`."""
+    table = Table("Nota", "Ação", "Onde")
+    for result in results:
+        table.add_row(result.note_title, str(result.action), result.reference or "")
+    console.print(table)
 
 
 def _options(numbered: bool, rest: bool, load: bool, width: int) -> RenderOptions:
     return RenderOptions(
         numbered=numbered, include_rest=rest, include_load=load, max_line_length=width
     )
+
+
+def _source(fonte: Fonte, workout_file: Path | None) -> WorkoutSource:
+    """Constrói a fonte escolhida — o único ponto que sabe quais existem."""
+    if fonte is Fonte.ARQUIVO:
+        if workout_file is None:
+            raise ConfigError("Com --fonte arquivo, informe o JSON em --arquivo.")
+        return WorkoutFileSource(workout_file)
+    return MfitSource(load_settings())
 
 
 def _destination(destino: Destino, out_dir: Path) -> NoteDestination:
@@ -78,27 +129,24 @@ def _destination(destino: Destino, out_dir: Path) -> NoteDestination:
 
 
 @app.command("rotinas")
-def routines() -> None:
-    """Lista as rotinas de treino da sua conta."""
+def routines(fonte: SourceOpt = Fonte.MFIT, workout_file: SourceFile = None) -> None:
+    """Lista as rotinas de treino disponíveis na fonte."""
 
-    async def run() -> list[dict[str, Any]]:
-        async with MfitClient(load_settings()) as client:
-            return await list_routines(client)
+    async def run() -> list[RoutineSummary]:
+        async with _source(fonte, workout_file) as source:
+            return await source.list_routines()
 
-    table = Table("ID", "Nome", "Início", "Fim", title="Rotinas no MFIT")
+    table = Table("ID", "Nome", "Início", "Fim", title=f"Rotinas em {fonte}")
     for routine in _run(run()):
-        table.add_row(
-            str(routine.get("id", "")),
-            str(routine.get("nome", "")),
-            str(routine.get("dataInicio", "")),
-            str(routine.get("dataFim", "")),
-        )
+        table.add_row(routine.id, routine.name, routine.starts_at or "", routine.ends_at or "")
     console.print(table)
 
 
 @app.command("preview")
 def preview(
-    routine_id: RoutineId,
+    routine_id: RoutineId = None,
+    fonte: SourceOpt = Fonte.MFIT,
+    workout_file: SourceFile = None,
     numbered: Numbered = True,
     rest: Rest = True,
     load: Load = True,
@@ -107,10 +155,10 @@ def preview(
     """Mostra no terminal exatamente o que iria para as notas."""
 
     async def run() -> list[Workout]:
-        async with MfitClient(load_settings()) as client:
-            return await fetch_workouts(client, routine_id)
+        async with _source(fonte, workout_file) as source:
+            return await source.fetch_workouts(routine_id)
 
-    for note in build_notes(_run(run()), _options(numbered, rest, load, width)):
+    for note in routine_to_notes(_run(run()), _options(numbered, rest, load, width)):
         console.print(f"\n[bold cyan]{note.title}[/]")
         for item in note.items:
             console.print(f"  [dim]☐[/] {item.text}")
@@ -118,11 +166,11 @@ def preview(
 
 @app.command("sync")
 def sync_command(
-    routine_id: RoutineId,
-    destino: Annotated[Destino, typer.Option("--destino", "-d")] = Destino.LOCAL,
-    out_dir: Annotated[Path, typer.Option("--saida", "-o", help="Só para --destino local.")] = (
-        PROJECT_ROOT / "notas"
-    ),
+    routine_id: RoutineId = None,
+    fonte: SourceOpt = Fonte.MFIT,
+    workout_file: SourceFile = None,
+    destino: DestinationOpt = Destino.LOCAL,
+    out_dir: OutDir = PROJECT_ROOT / "notas",
     numbered: Numbered = True,
     rest: Rest = True,
     load: Load = True,
@@ -131,26 +179,51 @@ def sync_command(
     """Gera as notas com checkboxes a partir de uma rotina."""
 
     async def run() -> list[NoteResult]:
-        async with MfitClient(load_settings()) as client:
-            workouts = await fetch_workouts(client, routine_id)
-        notes = build_notes(workouts, _options(numbered, rest, load, width))
+        async with _source(fonte, workout_file) as source:
+            workouts = await source.fetch_workouts(routine_id)
+        notes = routine_to_notes(workouts, _options(numbered, rest, load, width))
         async with _destination(destino, out_dir) as destination:
             return await destination.upsert_all(notes)
 
-    table = Table("Nota", "Ação", "Onde")
-    for result in _run(run()):
-        table.add_row(result.note_title, str(result.action), result.reference or "")
-    console.print(table)
+    _print_results(_run(run()))
+
+
+@app.command("exportar")
+def export_command(
+    routine_id: RoutineId = None,
+    out_file: Annotated[Path, typer.Option("--saida", "-o", help="Arquivo JSON de saída.")] = (
+        PROJECT_ROOT / "treinos.json"
+    ),
+    fonte: SourceOpt = Fonte.MFIT,
+    workout_file: SourceFile = None,
+) -> None:
+    """Exporta os treinos para o formato neutro, independente de serviço.
+
+    É a saída do MFIT: com o JSON na mão, `--fonte arquivo` alimenta o app sem
+    conta e sem rede, e qualquer outra ferramenta pode gerar o mesmo formato.
+    """
+
+    async def run() -> list[Workout]:
+        async with _source(fonte, workout_file) as source:
+            return await source.fetch_workouts(routine_id)
+
+    workouts = _run(run())
+    payload = json.dumps(workouts_to_dict(workouts), ensure_ascii=False, indent=2)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_text(payload + "\n", encoding="utf-8")
+
+    total = sum(len(workout.exercises) for workout in workouts)
+    console.print(f"[green]{len(workouts)} treinos ({total} exercícios) em {out_file}[/]")
 
 
 @app.command("limpar")
 def purge_command(
-    destino: Annotated[Destino, typer.Option("--destino", "-d")] = Destino.LOCAL,
+    destino: DestinationOpt = Destino.LOCAL,
     archive: Annotated[bool, typer.Option("--arquivar", help="Arquiva em vez de apagar.")] = False,
-    yes: Annotated[bool, typer.Option("--sim", "-s", help="Não pedir confirmação.")] = False,
-    out_dir: Annotated[Path, typer.Option("--saida", "-o", help="Só para --destino local.")] = (
-        PROJECT_ROOT / "notas"
-    ),
+    skip_confirmation: Annotated[
+        bool, typer.Option("--sim", "-s", help="Não pedir confirmação.")
+    ] = False,
+    out_dir: OutDir = PROJECT_ROOT / "notas",
 ) -> None:
     """Apaga (ou arquiva) só as notas criadas por este app.
 
@@ -158,7 +231,9 @@ def purge_command(
     rodapé, no destino local. Nota sem a marca nunca é tocada.
     """
     verb = "Arquivar" if archive else "Apagar"
-    if not yes and not typer.confirm(f"{verb} as notas marcadas com '{MARKER}' em {destino}?"):
+    if not skip_confirmation and not typer.confirm(
+        f"{verb} as notas marcadas com '{MARKER}' em {destino}?"
+    ):
         console.print("[yellow]Cancelado.[/]")
         raise typer.Exit(code=0)
 
@@ -171,50 +246,38 @@ def purge_command(
         console.print(f"[yellow]Nenhuma nota com a marca '{MARKER}'.[/]")
         return
 
-    table = Table("Nota", "Ação", "Onde")
-    for result in results:
-        table.add_row(result.note_title, str(result.action), result.reference or "")
-    console.print(table)
+    _print_results(results)
 
 
 segredos = typer.Typer(help="Tira os segredos do texto puro, cifrando com o TPM da máquina.")
 app.add_typer(segredos, name="segredos")
 
-#: (variável em texto puro, variável cifrada, chave do systemd-creds, rótulo)
-_SECRETS = (
-    ("MFIT_PASSWORD", "MFIT_PASSWORD_ENC", "mfit_password", "senha do MFIT"),
-    (
-        "GOOGLE_MASTER_TOKEN",
-        "GOOGLE_MASTER_TOKEN_ENC",
-        "google_master_token",
-        "master token do Google",
-    ),
-)
+
+def _backend_of(settings: Settings, secret: secrets_store.ManagedSecret) -> secrets_store.Backend:
+    """Onde o segredo está — o master token também mora no keyring."""
+    if secret.env_var == "GOOGLE_MASTER_TOKEN":
+        return keep_auth.stored_backend(settings)
+    plaintext, encrypted = settings.secret_pair(secret.env_var)
+    return secrets_store.backend_of(plaintext=plaintext, encrypted=encrypted)
 
 
 @segredos.command("status")
 def secrets_status() -> None:
     """Mostra onde cada segredo está guardado hoje."""
     settings = load_settings()
-    values = {
-        "MFIT_PASSWORD": (settings.password, settings.password_enc),
-        "GOOGLE_MASTER_TOKEN": (settings.google_master_token, settings.google_master_token_enc),
-    }
 
     table = Table("Segredo", "Onde está", title=f"Segredos em {env_file()}")
     exposed = False
-    for plain_var, _enc_var, _key, label in _SECRETS:
-        plaintext, encrypted = values[plain_var]
-        backend = secrets_store.backend_of(plaintext=plaintext, encrypted=encrypted)
-        color = "red" if backend is secrets_store.Backend.PLAINTEXT else "green"
+    for secret in secrets_store.MANAGED:
+        backend = _backend_of(settings, secret)
         exposed = exposed or backend is secrets_store.Backend.PLAINTEXT
-        table.add_row(label, f"[{color}]{backend}[/]")
+        color = "red" if backend is secrets_store.Backend.PLAINTEXT else "green"
+        table.add_row(secret.label, f"[{color}]{backend}[/]")
     console.print(table)
 
-    if not secrets_store.systemd_creds_available():
-        console.print("[yellow]systemd-creds indisponível nesta máquina.[/]")
-        return
-    if exposed:
+    if not secrets_store.cipher_available():
+        console.print(f"[yellow]Sem cifragem local aqui: {secrets_store.cipher_name()}.[/]")
+    elif exposed:
         console.print("Rode [bold]mfit2keep segredos proteger[/] para cifrar o que está exposto.")
     else:
         console.print("[green]Nada em texto puro.[/]")
@@ -226,45 +289,41 @@ def secrets_protect(
         bool, typer.Option("--escrever/--mostrar", help="Reescreve o .env ou só imprime.")
     ] = False,
 ) -> None:
-    """Cifra os segredos do .env com o TPM2 desta máquina.
+    """Cifra os segredos do .env com a cifragem nativa deste sistema.
 
     O blob resultante só decifra aqui: cópia de backup, disco roubado ou SSD
     devolvido em RMA não servem para nada.
     """
-    if not secrets_store.systemd_creds_available():
+    if not secrets_store.cipher_available():
         _fail(
             ConfigError(
-                "systemd-creds não está disponível para o seu usuário. "
-                "Sem ele, o master token continua no keyring e a senha, no .env."
+                f"Sem cifragem local disponível ({secrets_store.cipher_name()}). "
+                "O master token continua no keyring e a senha, no .env."
             )
         )
 
     settings = load_settings()
-    plaintexts = {
-        "MFIT_PASSWORD": settings.password,
-        "GOOGLE_MASTER_TOKEN": settings.google_master_token,
-    }
 
     lines: list[str] = []
-    for plain_var, enc_var, key, label in _SECRETS:
-        value = plaintexts[plain_var]
-        if not value:
-            console.print(f"[dim]{label}: nada em texto puro para cifrar.[/]")
+    for secret in secrets_store.MANAGED:
+        plaintext, _ = settings.secret_pair(secret.env_var)
+        if not plaintext:
+            console.print(f"[dim]{secret.label}: nada em texto puro para cifrar.[/]")
             continue
         try:
-            lines.append(f"{enc_var}={secrets_store.encrypt(key, value)}")
-        except secrets_store.SecretsError as exc:
-            _fail(exc)
-        console.print(f"[green]{label}: cifrado.[/]")
+            lines.append(f"{secret.encrypted_var}={secrets_store.encrypt(secret.key, plaintext)}")
+        except secrets_store.SecretsError as error:
+            _fail(error)
+        console.print(f"[green]{secret.label}: cifrado.[/]")
 
     if not lines:
         console.print("Nada a fazer.")
         return
 
     if write:
-        _rewrite_env(lines)
         console.print(
-            f"\n[green]{env_file()} atualizado.[/] As linhas em texto puro foram removidas."
+            f"\n[green]{replace_env_vars(lines)} atualizado.[/] "
+            "As linhas em texto puro foram removidas."
         )
     else:
         console.print("\nCole no seu .env e [bold]apague as linhas em texto puro[/]:\n")
@@ -276,20 +335,6 @@ def secrets_protect(
         "\n[yellow]Guarde a senha num gerenciador:[/] o blob depende do TPM desta placa. "
         "Reinstalar o sistema ou trocar de máquina exige redigitar."
     )
-
-
-def _rewrite_env(new_lines: list[str]) -> None:
-    """Troca as variáveis em texto puro pelas cifradas, preservando o resto."""
-    path = env_file()
-    replaced = {line.split("=", 1)[0] for line in new_lines}
-    dropped = {enc.removesuffix("_ENC") for enc in replaced}
-
-    kept = [
-        line
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.split("=", 1)[0].strip() not in dropped | replaced
-    ]
-    write_secret(path, "\n".join([*kept, *new_lines]) + "\n")
 
 
 @app.command("keep-login")
