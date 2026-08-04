@@ -21,8 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Versão exata: o setup-uv não publica tag móvel `v9`, só `v9.0.0`.
+      # O Dependabot cuida de subir isso mensalmente.
       - name: Instalar uv e Python 3.14
-        uses: astral-sh/setup-uv@v9
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.14"
           enable-cache: true
