@@ -2,12 +2,9 @@
 
 from typing import Any
 
-from mfit2keep.config import Settings
-from mfit2keep.destinations.base import NoteDestination, NoteResult
 from mfit2keep.mfit import MfitClient
-from mfit2keep.models import ChecklistNote, Workout
+from mfit2keep.models import Workout
 from mfit2keep.parser import parse_routine, parse_session
-from mfit2keep.render import RenderOptions, routine_to_notes
 
 
 async def fetch_workouts(client: MfitClient, routine_id: int | str) -> list[Workout]:
@@ -27,21 +24,3 @@ async def fetch_workouts(client: MfitClient, routine_id: int | str) -> list[Work
 async def list_routines(client: MfitClient) -> list[dict[str, Any]]:
     routines = await client.list_workouts()
     return routines if isinstance(routines, list) else [routines]
-
-
-def build_notes(
-    workouts: list[Workout], options: RenderOptions | None = None
-) -> list[ChecklistNote]:
-    return routine_to_notes(workouts, options)
-
-
-async def sync(
-    settings: Settings,
-    routine_id: int | str,
-    destination: NoteDestination,
-    options: RenderOptions | None = None,
-) -> list[NoteResult]:
-    async with MfitClient(settings) as client:
-        workouts = await fetch_workouts(client, routine_id)
-    async with destination:
-        return await destination.upsert_all(build_notes(workouts, options))

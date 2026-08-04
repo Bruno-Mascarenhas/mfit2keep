@@ -11,15 +11,20 @@ from rich.console import Console
 from rich.table import Table
 
 from mfit2keep import keep_auth, secrets_store
-from mfit2keep.config import PROJECT_ROOT, ConfigError, env_file, load_settings
+from mfit2keep.config import (
+    PROJECT_ROOT,
+    ConfigError,
+    env_file,
+    load_settings,
+    replace_env_vars,
+)
 from mfit2keep.destinations.base import MARKER, NoteDestination, NoteResult
 from mfit2keep.destinations.local import LocalDestinationError, LocalMarkdownDestination
 from mfit2keep.keep_auth import KeepAuthError
 from mfit2keep.mfit import MfitClient, MfitError
 from mfit2keep.models import Workout
-from mfit2keep.render import RenderOptions
-from mfit2keep.secure_io import write_secret
-from mfit2keep.sync import build_notes, fetch_workouts, list_routines
+from mfit2keep.render import RenderOptions, routine_to_notes
+from mfit2keep.sync import fetch_workouts, list_routines
 
 app = typer.Typer(
     add_completion=False,
@@ -41,6 +46,8 @@ Numbered = Annotated[bool, typer.Option("--numerar/--sem-numerar")]
 Rest = Annotated[bool, typer.Option("--intervalo/--sem-intervalo")]
 Load = Annotated[bool, typer.Option("--carga/--sem-carga")]
 Width = Annotated[int, typer.Option("--largura", help="Corta a linha; 0 = sem corte.")]
+DestinationOpt = Annotated[Destino, typer.Option("--destino", "-d")]
+OutDir = Annotated[Path, typer.Option("--saida", "-o", help="Só para --destino local.")]
 
 
 def _fail(exc: BaseException) -> NoReturn:
@@ -61,6 +68,14 @@ def _run[T](coro: Coroutine[Any, Any, T]) -> T:
         if expected is None:
             raise
         _fail(expected.exceptions[0])
+
+
+def _print_results(results: list[NoteResult]) -> None:
+    """Tabela do que aconteceu com cada nota — igual no `sync` e no `limpar`."""
+    table = Table("Nota", "Ação", "Onde")
+    for result in results:
+        table.add_row(result.note_title, str(result.action), result.reference or "")
+    console.print(table)
 
 
 def _options(numbered: bool, rest: bool, load: bool, width: int) -> RenderOptions:
@@ -110,7 +125,7 @@ def preview(
         async with MfitClient(load_settings()) as client:
             return await fetch_workouts(client, routine_id)
 
-    for note in build_notes(_run(run()), _options(numbered, rest, load, width)):
+    for note in routine_to_notes(_run(run()), _options(numbered, rest, load, width)):
         console.print(f"\n[bold cyan]{note.title}[/]")
         for item in note.items:
             console.print(f"  [dim]☐[/] {item.text}")
@@ -119,10 +134,8 @@ def preview(
 @app.command("sync")
 def sync_command(
     routine_id: RoutineId,
-    destino: Annotated[Destino, typer.Option("--destino", "-d")] = Destino.LOCAL,
-    out_dir: Annotated[Path, typer.Option("--saida", "-o", help="Só para --destino local.")] = (
-        PROJECT_ROOT / "notas"
-    ),
+    destino: DestinationOpt = Destino.LOCAL,
+    out_dir: OutDir = PROJECT_ROOT / "notas",
     numbered: Numbered = True,
     rest: Rest = True,
     load: Load = True,
@@ -133,24 +146,19 @@ def sync_command(
     async def run() -> list[NoteResult]:
         async with MfitClient(load_settings()) as client:
             workouts = await fetch_workouts(client, routine_id)
-        notes = build_notes(workouts, _options(numbered, rest, load, width))
+        notes = routine_to_notes(workouts, _options(numbered, rest, load, width))
         async with _destination(destino, out_dir) as destination:
             return await destination.upsert_all(notes)
 
-    table = Table("Nota", "Ação", "Onde")
-    for result in _run(run()):
-        table.add_row(result.note_title, str(result.action), result.reference or "")
-    console.print(table)
+    _print_results(_run(run()))
 
 
 @app.command("limpar")
 def purge_command(
-    destino: Annotated[Destino, typer.Option("--destino", "-d")] = Destino.LOCAL,
+    destino: DestinationOpt = Destino.LOCAL,
     archive: Annotated[bool, typer.Option("--arquivar", help="Arquiva em vez de apagar.")] = False,
     yes: Annotated[bool, typer.Option("--sim", "-s", help="Não pedir confirmação.")] = False,
-    out_dir: Annotated[Path, typer.Option("--saida", "-o", help="Só para --destino local.")] = (
-        PROJECT_ROOT / "notas"
-    ),
+    out_dir: OutDir = PROJECT_ROOT / "notas",
 ) -> None:
     """Apaga (ou arquiva) só as notas criadas por este app.
 
@@ -171,50 +179,31 @@ def purge_command(
         console.print(f"[yellow]Nenhuma nota com a marca '{MARKER}'.[/]")
         return
 
-    table = Table("Nota", "Ação", "Onde")
-    for result in results:
-        table.add_row(result.note_title, str(result.action), result.reference or "")
-    console.print(table)
+    _print_results(results)
 
 
 segredos = typer.Typer(help="Tira os segredos do texto puro, cifrando com o TPM da máquina.")
 app.add_typer(segredos, name="segredos")
-
-#: (variável em texto puro, variável cifrada, chave do systemd-creds, rótulo)
-_SECRETS = (
-    ("MFIT_PASSWORD", "MFIT_PASSWORD_ENC", "mfit_password", "senha do MFIT"),
-    (
-        "GOOGLE_MASTER_TOKEN",
-        "GOOGLE_MASTER_TOKEN_ENC",
-        "google_master_token",
-        "master token do Google",
-    ),
-)
 
 
 @segredos.command("status")
 def secrets_status() -> None:
     """Mostra onde cada segredo está guardado hoje."""
     settings = load_settings()
-    values = {
-        "MFIT_PASSWORD": (settings.password, settings.password_enc),
-        "GOOGLE_MASTER_TOKEN": (settings.google_master_token, settings.google_master_token_enc),
-    }
 
     table = Table("Segredo", "Onde está", title=f"Segredos em {env_file()}")
     exposed = False
-    for plain_var, _enc_var, _key, label in _SECRETS:
-        plaintext, encrypted = values[plain_var]
+    for secret in secrets_store.MANAGED:
+        plaintext, encrypted = settings.secret_pair(secret.env_var)
         backend = secrets_store.backend_of(plaintext=plaintext, encrypted=encrypted)
-        color = "red" if backend is secrets_store.Backend.PLAINTEXT else "green"
         exposed = exposed or backend is secrets_store.Backend.PLAINTEXT
-        table.add_row(label, f"[{color}]{backend}[/]")
+        color = "red" if backend is secrets_store.Backend.PLAINTEXT else "green"
+        table.add_row(secret.label, f"[{color}]{backend}[/]")
     console.print(table)
 
     if not secrets_store.systemd_creds_available():
         console.print("[yellow]systemd-creds indisponível nesta máquina.[/]")
-        return
-    if exposed:
+    elif exposed:
         console.print("Rode [bold]mfit2keep segredos proteger[/] para cifrar o que está exposto.")
     else:
         console.print("[green]Nada em texto puro.[/]")
@@ -240,31 +229,27 @@ def secrets_protect(
         )
 
     settings = load_settings()
-    plaintexts = {
-        "MFIT_PASSWORD": settings.password,
-        "GOOGLE_MASTER_TOKEN": settings.google_master_token,
-    }
 
     lines: list[str] = []
-    for plain_var, enc_var, key, label in _SECRETS:
-        value = plaintexts[plain_var]
-        if not value:
-            console.print(f"[dim]{label}: nada em texto puro para cifrar.[/]")
+    for secret in secrets_store.MANAGED:
+        plaintext, _ = settings.secret_pair(secret.env_var)
+        if not plaintext:
+            console.print(f"[dim]{secret.label}: nada em texto puro para cifrar.[/]")
             continue
         try:
-            lines.append(f"{enc_var}={secrets_store.encrypt(key, value)}")
+            lines.append(f"{secret.encrypted_var}={secrets_store.encrypt(secret.key, plaintext)}")
         except secrets_store.SecretsError as exc:
             _fail(exc)
-        console.print(f"[green]{label}: cifrado.[/]")
+        console.print(f"[green]{secret.label}: cifrado.[/]")
 
     if not lines:
         console.print("Nada a fazer.")
         return
 
     if write:
-        _rewrite_env(lines)
         console.print(
-            f"\n[green]{env_file()} atualizado.[/] As linhas em texto puro foram removidas."
+            f"\n[green]{replace_env_vars(lines)} atualizado.[/] "
+            "As linhas em texto puro foram removidas."
         )
     else:
         console.print("\nCole no seu .env e [bold]apague as linhas em texto puro[/]:\n")
@@ -276,20 +261,6 @@ def secrets_protect(
         "\n[yellow]Guarde a senha num gerenciador:[/] o blob depende do TPM desta placa. "
         "Reinstalar o sistema ou trocar de máquina exige redigitar."
     )
-
-
-def _rewrite_env(new_lines: list[str]) -> None:
-    """Troca as variáveis em texto puro pelas cifradas, preservando o resto."""
-    path = env_file()
-    replaced = {line.split("=", 1)[0] for line in new_lines}
-    dropped = {enc.removesuffix("_ENC") for enc in replaced}
-
-    kept = [
-        line
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.split("=", 1)[0].strip() not in dropped | replaced
-    ]
-    write_secret(path, "\n".join([*kept, *new_lines]) + "\n")
 
 
 @app.command("keep-login")

@@ -12,8 +12,6 @@ prefixo ``Bearer``. O SPA guarda esse mesmo JWT no cookie ``client_token``.
 """
 
 import asyncio
-import json
-from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
@@ -187,24 +185,3 @@ def _message(response: httpx.Response) -> str:
     if isinstance(payload, dict):
         return str(payload.get("message") or payload)[:300]
     return str(payload)[:300]
-
-
-async def dump_raw(settings: Settings, routine_id: int | str | None, out_dir: Path) -> list[Path]:
-    """Salva os payloads crus em disco — usado para inspecionar o formato real."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
-
-    async with MfitClient(settings) as client:
-        payloads: dict[str, Json] = {"workout_all": await client.list_workouts()}
-        if routine_id is not None:
-            routine = await client.workout_details(routine_id)
-            payloads[f"workout_{routine_id}"] = routine
-            day_ids = [d["id"] for d in routine.get("workouts") or [] if d.get("id") is not None]
-            for day_id, session in (await client.workout_sessions(day_ids)).items():
-                payloads[f"session_{day_id}"] = session
-
-    for name, payload in payloads.items():
-        path = out_dir / f"{name}.json"
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        written.append(path)
-    return written

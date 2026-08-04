@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 from mfit2keep import secrets_store
+from mfit2keep.secure_io import write_secret
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 #: Repositório clonado (instalação editável): o .env e o .state ficam ao lado do código.
@@ -68,6 +69,19 @@ class Settings:
     password_enc: str | None = None
     google_master_token_enc: str | None = None
 
+    def secret_pair(self, env_var: str) -> tuple[str | None, str | None]:
+        """Par (texto puro, cifrado) de um segredo, pelo nome da variável.
+
+        Existe para a CLI percorrer :data:`secrets_store.MANAGED` sem manter
+        um mapa paralelo de nomes.
+        """
+        match env_var:
+            case "MFIT_PASSWORD":
+                return self.password, self.password_enc
+            case "GOOGLE_MASTER_TOKEN":
+                return self.google_master_token, self.google_master_token_enc
+        raise ConfigError(f"Segredo desconhecido: {env_var}")
+
     def resolved_password(self) -> str | None:
         return secrets_store.resolve(
             "mfit_password", plaintext=self.password, encrypted=self.password_enc
@@ -87,6 +101,26 @@ class Settings:
                 f"Defina MFIT_EMAIL e MFIT_PASSWORD em {env_file()} (copie de .env.example)."
             )
         return self.email, password
+
+
+def replace_env_vars(new_lines: list[str]) -> Path:
+    """Reescreve o ``.env`` trocando variáveis, preservando o resto do arquivo.
+
+    Cada linha nova substitui a variável de mesmo nome e também a versão em
+    texto puro correspondente (``X_ENC`` remove ``X``) — o objetivo é justamente
+    não deixar o segredo antigo para trás.
+    """
+    path = env_file()
+    replaced = {line.split("=", 1)[0] for line in new_lines}
+    dropped = {name.removesuffix("_ENC") for name in replaced}
+
+    kept = [
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.split("=", 1)[0].strip() not in dropped | replaced
+    ]
+    write_secret(path, "\n".join([*kept, *new_lines]) + "\n")
+    return path
 
 
 def load_settings() -> Settings:

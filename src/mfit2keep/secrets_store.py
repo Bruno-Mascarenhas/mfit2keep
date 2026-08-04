@@ -19,6 +19,7 @@ em repouso, e é ele que estava faltando.
 
 import shutil
 import subprocess
+from dataclasses import dataclass
 from enum import StrEnum
 
 #: Prefixo dos nomes: o blob é atado ao nome, então decifrar com outro falha.
@@ -28,6 +29,33 @@ TIMEOUT_SECONDS = 30
 
 class SecretsError(RuntimeError):
     """Falha ao cifrar ou decifrar um segredo."""
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedSecret:
+    """Um segredo que o app sabe cifrar, e como ele aparece no ``.env``.
+
+    Junta o que antes eram listas paralelas na CLI: variável em texto puro,
+    variável cifrada, chave do systemd-creds e rótulo para o usuário.
+    """
+
+    env_var: str
+    label: str
+
+    @property
+    def encrypted_var(self) -> str:
+        return f"{self.env_var}_ENC"
+
+    @property
+    def key(self) -> str:
+        return self.env_var.lower()
+
+
+#: Ordem estável — é a ordem em que a CLI mostra e cifra.
+MANAGED = (
+    ManagedSecret("MFIT_PASSWORD", "senha do MFIT"),
+    ManagedSecret("GOOGLE_MASTER_TOKEN", "master token do Google"),
+)
 
 
 class Backend(StrEnum):

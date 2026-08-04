@@ -16,6 +16,7 @@ Três particularidades moldam este arquivo:
 
 import asyncio
 import random
+from collections.abc import Callable
 from typing import Any, Protocol
 
 import gkeepapi
@@ -67,8 +68,6 @@ class KeepDestination(NoteDestination):
     sincronizar no meio do treino não apaga o que já foi feito.
     """
 
-    name = "keep"
-
     def __init__(self, credentials: KeepCredentials, *, client: KeepClient | None = None) -> None:
         self._credentials = credentials
         self._client = client
@@ -102,12 +101,19 @@ class KeepDestination(NoteDestination):
         return (await self.upsert_all([note]))[0]
 
     async def upsert_all(self, notes: list[ChecklistNote]) -> list[NoteResult]:
-        keep = await self._keep()
-        applied = await asyncio.to_thread(self._apply_all, keep, notes)
-        # Um sync só para o lote — e antes de montar as URLs, que dependem do
-        # server_id que o Keep atribui na subida.
-        await asyncio.to_thread(self._flush)
+        applied = await self._in_thread(self._apply_all, notes)
         return [NoteResult(note.title, action, _url(node)) for note, action, node in applied]
+
+    async def _in_thread[T, R](self, work: Callable[[KeepClient, T], R], argument: T) -> R:
+        """Roda o trabalho e sobe o lote, tudo fora do loop de eventos.
+
+        O ``gkeepapi`` é síncrono. O ``_flush`` vem sempre logo depois porque as
+        URLs do resultado dependem do ``server_id`` que só existe após a subida.
+        """
+        keep = await self._keep()
+        result = await asyncio.to_thread(work, keep, argument)
+        await asyncio.to_thread(self._flush)
+        return result
 
     def _apply_all(
         self, keep: KeepClient, notes: list[ChecklistNote]
@@ -167,10 +173,7 @@ class KeepDestination(NoteDestination):
     # ----------------------------------------------------------------- purge
 
     async def purge(self, *, archive: bool = False) -> list[NoteResult]:
-        keep = await self._keep()
-        results = await asyncio.to_thread(self._purge_sync, keep, archive)
-        await asyncio.to_thread(self._flush)
-        return results
+        return await self._in_thread(self._purge_sync, archive)
 
     def _purge_sync(self, keep: KeepClient, archive: bool) -> list[NoteResult]:
         label = keep.findLabel(MARKER)
@@ -200,11 +203,6 @@ class KeepDestination(NoteDestination):
                 # Registrado à parte para que a fusão com o disco não o traga de volta.
                 self._forgotten.add(external_id)
 
-    # ----------------------------------------------------------------- close
-
-    async def aclose(self) -> None:
-        return None
-
     def _flush(self) -> None:
         assert self._client is not None
         # O sync vem primeiro: se ele falhar, o mapa não pode registrar um
@@ -221,7 +219,7 @@ class KeepDestination(NoteDestination):
         virariam notas duplicadas no Keep.
         """
         with exclusive_lock(NOTE_MAP):
-            merged = {str(k): str(v) for k, v in (read_secret_json(NOTE_MAP) or {}).items()}
+            merged = _load_note_map()
             merged.update(self._note_ids)
             for external_id in self._forgotten:
                 merged.pop(external_id, None)

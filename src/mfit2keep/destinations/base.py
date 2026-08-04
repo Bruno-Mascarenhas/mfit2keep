@@ -37,9 +37,6 @@ class NoteResult:
 class NoteDestination(ABC):
     """Destino capaz de guardar notas com checkboxes."""
 
-    #: Nome curto usado na CLI (``--destino local``).
-    name: str = "base"
-
     @abstractmethod
     async def upsert(self, note: ChecklistNote) -> NoteResult:
         """Cria a nota ou atualiza a existente com o mesmo ``external_id``."""

@@ -40,8 +40,6 @@ def _id_suffix(external_id: str) -> str:
 
 
 class LocalMarkdownDestination(NoteDestination):
-    name = "local"
-
     def __init__(self, out_dir: Path) -> None:
         self._out_dir = out_dir
         self._out_dir.mkdir(parents=True, exist_ok=True)
@@ -123,10 +121,6 @@ class LocalMarkdownDestination(NoteDestination):
         for item in note.items:
             checked = item.checked or before.take(item.text)
             lines.append(f"- [{'x' if checked else ' '}] {item.text}")
-            lines.extend(
-                f"  - [{'x' if child.checked or before.take(child.text) else ' '}] {child.text}"
-                for child in item.children
-            )
         lines += ["", _STAMP.format(note.external_id or "")]
         return "\n".join(lines) + "\n"
 
