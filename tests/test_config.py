@@ -278,3 +278,15 @@ def test_quoted_single_line_value_does_not_swallow_the_next_line(
     config.replace_env_vars(["MFIT_PASSWORD_ENC=blob"])
 
     assert dotenv_values(path).get("MFIT_EMAIL") == "eu@x.com"
+
+
+def test_writing_a_plaintext_value_is_not_mistaken_for_a_leftover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Gravar MFIT_PASSWORD em texto puro é uso legítimo (o painel faz isso no
+    # primeiro uso); só a troca por uma versão _ENC exige que o texto puro suma.
+    path = write_env(tmp_path, "MFIT_EMAIL=eu@x.com\n", monkeypatch)
+
+    config.replace_env_vars(["MFIT_PASSWORD=segredo"])
+
+    assert dotenv_values(path).get("MFIT_PASSWORD") == "segredo"

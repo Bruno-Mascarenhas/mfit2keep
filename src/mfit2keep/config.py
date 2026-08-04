@@ -135,12 +135,18 @@ def replace_env_vars(new_lines: list[str]) -> Path:
     path = env_file()
     replaced = {line.split("=", 1)[0] for line in new_lines}
     obsolete = replaced | {name.removesuffix("_ENC") for name in replaced}
+    # Só o que está sendo trocado POR UMA VERSÃO CIFRADA precisa sumir de vez.
+    # Gravar `MFIT_PASSWORD=` em texto puro é uso legítimo (é o que o painel
+    # faz no primeiro uso), e não pode ser confundido com segredo esquecido.
+    substituidos_por_cifrado = {
+        name.removesuffix("_ENC") for name in replaced if name.endswith("_ENC")
+    }
 
     previous = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     kept = _lines_to_keep(previous, obsolete)
 
     write_secret(path, "\n".join([*kept, *new_lines]) + "\n")
-    _assert_plaintext_is_gone(path, obsolete)
+    _assert_plaintext_is_gone(path, substituidos_por_cifrado)
     return path
 
 
@@ -187,17 +193,17 @@ def _env_var_of(line: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _assert_plaintext_is_gone(path: Path, obsolete: set[str]) -> None:
+def _assert_plaintext_is_gone(path: Path, should_be_gone: set[str]) -> None:
     """Confere a promessa com o mesmo parser que o app usa para ler.
 
     A filtragem é linha a linha e o formato do dotenv não é: valor entre aspas
     ocupando duas linhas, por exemplo, deixaria metade do segredo para trás. Em
     vez de confiar na reescrita, relemos e falamos a verdade ao usuário.
     """
+    if not should_be_gone:
+        return
     remaining = dotenv_values(path)
-    leftover = sorted(
-        name for name in obsolete if not name.endswith("_ENC") and remaining.get(name)
-    )
+    leftover = sorted(name for name in should_be_gone if remaining.get(name))
     if leftover:
         raise ConfigError(
             f"Não consegui remover de {path}: {', '.join(leftover)}. "

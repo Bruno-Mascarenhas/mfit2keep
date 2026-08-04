@@ -70,6 +70,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/mfit2keep"]
 
+# A interface mora em src/frontend, mas precisa viajar dentro do pacote para
+# funcionar quando instalado — o app procura nos dois lugares.
+[tool.hatch.build.targets.wheel.force-include]
+"src/frontend" = "mfit2keep/frontend"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

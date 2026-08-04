@@ -10,7 +10,7 @@
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![mypy strict](https://img.shields.io/badge/mypy-strict-2A6DB2)](https://mypy-lang.org/)
 [![uv](https://img.shields.io/badge/deps-uv-DE5FE9?logo=uv&logoColor=white)](https://docs.astral.sh/uv/)
-[![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen)](tests/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -28,6 +28,11 @@ checkbox por exercício já no formato certo para a tela do relógio.
   <img src="docs/preview.svg" alt="Saída do comando preview no terminal" width="720">
 </div>
 
+> [!TIP]
+> **Não usa terminal?** Depois de instalar, rode `mfit2keep painel` — abre uma tela no navegador
+> que faz tudo (login, Keep, criar as notas) sem você digitar mais nenhum comando.
+> Veja [Painel no navegador](#painel-no-navegador).
+
 ---
 
 ## Índice
@@ -35,6 +40,7 @@ checkbox por exercício já no formato certo para a tela do relógio.
 - [Como funciona](#como-funciona)
 - [Instalação](#instalação)
 - [Configuração](#configuração)
+- [Painel no navegador](#painel-no-navegador)
 - [Uso](#uso)
 - [Sair do MFIT: o formato neutro](#sair-do-mfit-o-formato-neutro)
 - [Segredos: tirando a senha do texto puro](#segredos-tirando-a-senha-do-texto-puro)
@@ -145,6 +151,41 @@ Defina também `GOOGLE_EMAIL` no `.env` — é como o app sabe de qual conta é 
 O master token resultante (`aas_et/…`) vai para o **keyring do sistema**. Ele equivale à senha da
 conta e não expira, então nunca comite nem coloque em log.
 
+## Painel no navegador
+
+Para quem não quer saber de linha de comando:
+
+```bash
+mfit2keep painel
+```
+
+Abre o navegador sozinho, numa tela com quatro passos numerados:
+
+```mermaid
+flowchart TB
+    P1["1 · Sua conta do MFIT<br/><small>e-mail, senha e a conta Google</small>"]
+    P2["2 · Liberar o Google Keep<br/><small>receita ilustrada do cookie, uma vez só</small>"]
+    P3["3 · Proteger a senha<br/><small>opcional, um clique</small>"]
+    P4["4 · Criar as notas<br/><small>escolhe a rotina e sincroniza</small>"]
+    P1 --> P2 --> P3 --> P4
+    P4 --> OK["✅ notas no Keep,<br/>com link para cada uma"]
+```
+
+O passo 2 é o que costuma travar quem não é técnico, então a tela traz a receita inteira — com o
+aviso de que a página do Google **fica girando para sempre** (é normal) e de que o código vale
+poucos minutos.
+
+**Como isso é isolado**, já que a tela mexe com senha e master token:
+
+- escuta **só em `127.0.0.1`** — nada de rede, nem do seu roteador;
+- toda ação exige um token sorteado a cada execução e entregue na URL. Outra aba aberta no seu
+  navegador até consegue fazer `POST` para `localhost`, mas não lê esse token nem manda cabeçalho
+  customizado sem passar pelo CORS;
+- **nenhum segredo volta para o navegador**: a tela mostra "preenchido"/"cifrado", nunca o valor.
+
+A interface é um HTML, um CSS e um JS em `src/frontend/` — **sem npm, sem build, sem framework**.
+Ela é servida pela biblioteca padrão do Python, então não há dependência nova para instalar.
+
 ## Uso
 
 ```bash
@@ -172,6 +213,7 @@ mfit2keep limpar --destino keep
 
 | Comando | O que faz |
 | --- | --- |
+| `painel` | Abre a tela de configuração no navegador |
 | `rotinas` | Lista as rotinas disponíveis na fonte |
 | `preview` | Mostra no terminal exatamente o que iria para as notas |
 | `sync` | Cria/atualiza as notas no destino |
@@ -344,7 +386,13 @@ src/mfit2keep/
 ├── secrets_store.py    # cifragem nativa: systemd-creds (Linux) / DPAPI (Windows)
 ├── _dpapi.py           # DPAPI via ctypes, sem dependência extra
 ├── secure_io.py        # escrita restrita e atômica + trava (fcntl/msvcrt)
+├── web.py              # painel local: servidor da biblioteca padrão, só em 127.0.0.1
 └── cli.py              # Typer + Rich
+
+src/frontend/           # a interface do painel — HTML, CSS e JS, sem build
+├── index.html
+├── style.css
+└── app.js
 ```
 
 Detalhes que valem saber:
@@ -372,7 +420,7 @@ Mapeada a partir do bundle do SPA. Autenticação é `authorization: <jwt>` — 
 ## Desenvolvimento
 
 ```bash
-pytest                            # 222 testes
+pytest                            # 238 testes
 ruff check src tests
 ruff format src tests
 mypy --platform linux             # o código tem caminho por sistema:
