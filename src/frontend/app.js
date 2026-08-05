@@ -116,6 +116,36 @@ $("proteger").addEventListener("click", async (evento) => {
   if (estado) pintarEstado(estado);
 });
 
+// As duas escolhas do passo 4. O exemplo ao vivo faz mais que um texto de
+// ajuda: a pessoa vê a linha mudar antes de mandar cinco notas para o Keep.
+// Os textos espelham render.py — tests/test_web.py falha se um dos dois mudar
+// sem o outro.
+const EXEMPLOS = {
+  styles: {
+    classico: "🏋️ A — Peito e Tríceps",
+    musculos: "🐦💪 A — Peito e Tríceps",
+    clean: "A — Peito e Tríceps",
+  },
+  reps: {
+    mfit: "Supino — 3 a 4x de 12 a 15",
+    min: "Supino — 3x12",
+    max: "Supino — 4x15",
+  },
+};
+
+function opcao(id) {
+  const seletor = $(id);
+  const mostrar = () => {
+    $(`exemplo-${id}`).textContent = EXEMPLOS[id][seletor.value] || "";
+  };
+  seletor.addEventListener("change", mostrar);
+  mostrar();
+  return seletor;
+}
+
+const estilo = opcao("styles");
+const repeticoes = opcao("reps");
+
 $("buscar").addEventListener("click", async (evento) => {
   const dados = await comEstado(evento.target, "estado-sync", "", () => chamar("/api/rotinas", {}));
   if (!dados) return;
@@ -140,7 +170,12 @@ $("buscar").addEventListener("click", async (evento) => {
 
 $("sincronizar").addEventListener("click", async (evento) => {
   const dados = await comEstado(evento.target, "estado-sync", "pronto!", () =>
-    chamar("/api/sync", { routine_id: $("rotina").value, destino: "keep" }),
+    chamar("/api/sync", {
+      routine_id: $("rotina").value,
+      destino: "keep",
+      styles: estilo.value,
+      reps: repeticoes.value,
+    }),
   );
   if (!dados) return;
 

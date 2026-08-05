@@ -38,6 +38,29 @@ def test_cardio_without_interval_has_no_rest(session_bicep: dict[str, Any]) -> N
     assert cardio.reps == "40"
 
 
+def test_muscle_group_comes_from_the_exercise_group() -> None:
+    supino = exercise("Supino Reto") | {
+        "exerciseGroup": {"id": 1, "nome": "Peitoral", "alias": "exercise_group_chest"},
+        "exerciseCategory": {"id": 1, "name": "weightlifting"},
+    }
+    session = {"id": 1, "nome": "X", "exercs": [group(supino)]}
+
+    assert parse_session(session).exercises[0].muscle_group == "Peitoral"
+
+
+def test_aerobic_category_names_the_group_when_it_is_missing() -> None:
+    # Sem o grupo, é a categoria que revela o exercício cujas "repetições"
+    # são minutos.
+    esteira = exercise("Esteira Caminhada") | {"exerciseCategory": {"name": "aerobic"}}
+    session = {"id": 1, "nome": "X", "exercs": [group(esteira)]}
+
+    assert parse_session(session).exercises[0].muscle_group == "Aeróbio"
+
+
+def test_exercise_without_any_classification_has_no_group(session_bicep: dict[str, Any]) -> None:
+    assert all(e.muscle_group is None for e in parse_session(session_bicep).exercises)
+
+
 def test_load_zero_is_dropped(session_bicep: dict[str, Any]) -> None:
     assert all(e.load is None for e in parse_session(session_bicep).exercises)
 

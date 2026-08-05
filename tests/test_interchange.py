@@ -20,7 +20,13 @@ def treinos() -> list[Workout]:
             letter="A",
             description="aquecer antes",
             exercises=[
-                Exercise(name="Rosca Direta", reps="3x12", load="20kg", rest="45s"),
+                Exercise(
+                    name="Rosca Direta",
+                    reps="3x12",
+                    load="20kg",
+                    rest="45s",
+                    muscle_group="Bíceps",
+                ),
                 Exercise(name="Tríceps Testa", reps="3x12", notes="pegada fechada"),
             ],
         ),
@@ -45,7 +51,7 @@ def test_export_is_plain_json_without_python_types() -> None:
     payload = workouts_to_dict(treinos())
 
     exercise = payload["workouts"][0]["exercises"][0]
-    assert set(exercise) == {"name", "reps", "load", "rest", "notes", "group"}
+    assert set(exercise) == {"name", "reps", "load", "rest", "notes", "group", "muscle_group"}
     assert all(value is None or isinstance(value, str) for value in exercise.values())
 
 

@@ -12,6 +12,8 @@ import pytest
 
 from mfit2keep import keep_auth, secrets_store, web
 from mfit2keep.config import ConfigError
+from mfit2keep.models import Exercise, Workout
+from mfit2keep.render import RenderOptions, RepsMode, TitleStyle, note_title, watch_reps
 from mfit2keep.sources.mfit import MfitSource
 from mfit2keep.sources.mfit_api import MfitError
 
@@ -318,3 +320,99 @@ def test_the_tab_has_an_icon(painel: tuple[str, str]) -> None:
     pagina = (web.frontend_dir() / "index.html").read_text(encoding="utf-8")
     # Sem o link, o navegador mostra o globo genérico na aba.
     assert 'rel="icon"' in pagina
+
+
+def test_the_screen_offers_the_note_format_options() -> None:
+    pagina = (web.frontend_dir() / "index.html").read_text(encoding="utf-8")
+
+    # Sem os dois seletores, o passo 4 só sabe criar nota no formato padrão.
+    assert 'id="styles"' in pagina
+    assert 'id="reps"' in pagina
+    # A dica é o que explica a escolha para quem nunca viu a CLI, e o
+    # aria-describedby é o que a entrega para o leitor de tela.
+    assert pagina.count('role="tooltip"') == 2
+    assert pagina.count('aria-describedby="dica-styles"') == 2
+    assert pagina.count('aria-describedby="dica-reps"') == 2
+
+
+def test_the_live_example_on_the_screen_matches_what_render_produces() -> None:
+    """O exemplo ao vivo é escrito em JS, mas quem manda no formato é o render.
+
+    Sem esta amarra, mudar o render deixaria a tela prometendo uma linha que
+    as notas não têm — e ninguém perceberia até abrir o relógio.
+    """
+    app_js = (web.frontend_dir() / "app.js").read_text(encoding="utf-8")
+    treino = Workout(id="1", name="Peito e Tríceps", letter="A")
+    supino = Exercise(name="Supino", reps="3 a 4x de 12 a 15")
+
+    for style in TitleStyle:
+        esperado = note_title(treino, RenderOptions(style=style))
+        assert f'{style.value}: "{esperado}"' in app_js
+
+    for mode in RepsMode:
+        assert f'{mode.value}: "Supino — {watch_reps(supino, mode)}"' in app_js
+
+
+def _um_treino(*_args: object, **_kwargs: object) -> list[Workout]:
+    return [
+        Workout(
+            id="1",
+            name="Peito e Tríceps",
+            letter="A",
+            exercises=[Exercise(name="Supino Reto", reps="3 a 4x de 12 a 15")],
+        )
+    ]
+
+
+def _sincronizar(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **opcoes: str
+) -> dict[str, str]:
+    """Sincroniza uma rotina de mentira no destino local e devolve a nota."""
+    base, token = painel
+    pedir(base, "/api/config", token, {"mfit_email": "eu@x.com", "mfit_password": "segredo"})
+
+    async def treinos(*args: object, **kwargs: object) -> list[Workout]:
+        return _um_treino(*args, **kwargs)
+
+    monkeypatch.setattr(MfitSource, "fetch_workouts", treinos)
+    # O destino local grava em ./notas; sem isto, a suíte sujaria o repositório.
+    monkeypatch.chdir(tmp_path)
+
+    status, corpo = pedir(
+        base, "/api/sync", token, {"routine_id": "1", "destino": "local", **opcoes}
+    )
+
+    assert status == 200
+    nota: dict[str, str] = corpo["notas"][0]
+    return nota
+
+
+def test_sync_uses_the_options_chosen_on_the_screen(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    nota = _sincronizar(painel, monkeypatch, tmp_path, styles="musculos", reps="min")
+
+    assert nota["titulo"] == "🐦💪 A — Peito e Tríceps"
+    assert "3x12" in Path(nota["onde"]).read_text(encoding="utf-8")
+
+
+def test_sync_without_options_keeps_the_default_format(
+    painel: tuple[str, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    nota = _sincronizar(painel, monkeypatch, tmp_path)
+
+    assert nota["titulo"] == "🏋️ A — Peito e Tríceps"
+    assert "3 a 4x de 12 a 15" in Path(nota["onde"]).read_text(encoding="utf-8")
+
+
+def test_sync_refuses_an_option_that_is_not_in_the_menu(painel: tuple[str, str]) -> None:
+    base, token = painel
+
+    status, corpo = pedir(
+        base, "/api/sync", token, {"routine_id": "1", "destino": "local", "styles": "arco-iris"}
+    )
+
+    # A rota é HTTP: o valor não pode vir de fora do menu só porque o <select> é nosso.
+    assert status == 400
+    assert "arco-iris" in corpo["erro"]
+    assert "musculos" in corpo["erro"]

@@ -106,6 +106,7 @@ def _exercise_to_dict(exercise: Exercise) -> dict[str, Any]:
         "rest": exercise.rest,
         "notes": exercise.notes,
         "group": exercise.group,
+        "muscle_group": exercise.muscle_group,
     }
 
 
@@ -141,6 +142,7 @@ def _exercise_from_dict(raw: Any) -> Exercise:
         rest=_optional_text(raw.get("rest")),
         notes=_optional_text(raw.get("notes")),
         group=_optional_text(raw.get("group")),
+        muscle_group=_optional_text(raw.get("muscle_group")),
     )
 
 

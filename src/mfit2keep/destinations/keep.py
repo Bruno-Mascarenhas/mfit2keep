@@ -3,13 +3,16 @@
 A API oficial do Keep é Workspace-only, então conta pessoal só chega lá pelo
 ``gkeepapi`` autenticado com master token — veja :mod:`mfit2keep.keep_auth`.
 
-Três particularidades moldam este arquivo:
+Quatro particularidades moldam este arquivo:
 
 * ``gkeepapi`` é síncrono (usa ``requests``), então tudo vai para uma thread com
   :func:`asyncio.to_thread` — o loop não pode bloquear.
 * ``List.add()`` sem ``sort`` explícito embaralha a lista. A ordem dos
   exercícios importa, então replicamos o que o ``createList`` faz: um ``sort``
   inteiro decrescente por item.
+* A ordem das *notas* na tela tem o mesmo problema, um nível acima: a
+  ``gkeepapi`` sorteia o ``sortValue`` de cada nota nova, e a rotina sai
+  embaralhada no celular e no relógio. Veja :func:`_order`.
 * O Keep não guarda metadados nossos na nota, então o vínculo
   ``external_id -> id da nota`` fica num mapa local, em ``.state/``.
 """
@@ -17,7 +20,7 @@ Três particularidades moldam este arquivo:
 import asyncio
 import contextlib
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any, Protocol
 
 import gkeepapi
@@ -33,6 +36,10 @@ from mfit2keep.secure_io import exclusive_lock, read_secret_json, write_secret_j
 NOTE_MAP = STATE_DIR / "keep_notes.json"
 STATE_CACHE = STATE_DIR / "keep_state.json"
 NOTE_URL = "https://keep.google.com/#NOTE/{}"
+
+#: Distância entre duas notas vizinhas na ordenação do Keep. É o passo que o
+#: próprio Keep usa quando você arrasta uma nota na tela (2^20).
+SORT_STEP = 1 << 20
 
 
 class KeepClient(Protocol):
@@ -60,6 +67,8 @@ class KeepClient(Protocol):
     def findLabel(self, query: str, create: bool = ...) -> Any: ...
 
     def find(self, labels: list[Any] | None = ..., trashed: bool | None = ...) -> Any: ...
+
+    def all(self) -> Any: ...
 
 
 class KeepDestination(NoteDestination):
@@ -119,7 +128,15 @@ class KeepDestination(NoteDestination):
     def _apply_all(
         self, keep: KeepClient, notes: list[ChecklistNote]
     ) -> list[tuple[ChecklistNote, Action, KeepList]]:
-        return [(note, *self._apply(keep, note)) for note in notes]
+        applied = [(note, *self._apply(keep, note)) for note in notes]
+        reordered = _order([node for _, _, node in applied], keep.all())
+        # Nota que só mudou de lugar continua subindo para o Keep — dizer "sem
+        # mudança" ali seria mentir sobre o que a execução fez. Quem já era
+        # "criada" não vira "atualizada" por causa da posição.
+        return [
+            (note, Action.UPDATED if _moved(action, node, reordered) else action, node)
+            for note, action, node in applied
+        ]
 
     def _apply(self, keep: KeepClient, note: ChecklistNote) -> tuple[Action, KeepList]:
         wanted = [item.text for item in note.items]
@@ -235,6 +252,70 @@ class KeepDestination(NoteDestination):
             # Só depois de gravar: falha de escrita não pode perder o registro
             # de que estas notas foram removidas.
             self._forgotten.clear()
+
+
+def _moved(action: Action, node: KeepList, reordered: set[str]) -> bool:
+    """A nota não mudou de conteúdo, mas mudou de lugar na tela."""
+    return action is Action.UNCHANGED and str(node.id) in reordered
+
+
+def _order(nodes: list[KeepList], account: Iterable[Any]) -> set[str]:
+    """Enfileira as notas na ordem dos dias — A, B, C… — na tela do Keep.
+
+    O Keep guarda a posição de cada nota num ``sortValue``, **maior em cima**:
+    é o número que ele reescreve quando você arrasta a nota na tela. A
+    ``gkeepapi`` **sorteia** esse valor em toda nota nova, e é isso que faz o
+    lote sair embaralhado no celular e no relógio.
+
+    Aqui ele passa a ser explícito e decrescente, do primeiro dia para o
+    último. Nada é reescrito quando já está na ordem certa — nota limpa não
+    vira upload.
+
+    Espaçar as datas de edição, para cobrir quem ordena por "data de
+    modificação", foi tentado e não funciona: o servidor do Keep carimba o
+    ``userEdited`` dele por cima do que a gente manda, e as cinco notas voltam
+    do sync com o mesmo horário. O ``sortValue`` é o único lugar onde a ordem
+    fica de pé.
+
+    Devolve os ids das notas que mudaram de lugar, para o resultado dizer a
+    verdade sobre o que subiu.
+    """
+    if not nodes:
+        return set()
+
+    top = _anchor(nodes, account)
+    reordered: set[str] = set()
+    for position, node in enumerate(nodes):
+        if node.sort != (wanted := top - position * SORT_STEP):
+            node.sort = wanted
+            reordered.add(str(node.id))
+    return reordered
+
+
+def _anchor(nodes: list[KeepList], account: Iterable[Any]) -> int:
+    """De onde o bloco desce: acima das outras notas, como toda nota nova.
+
+    O valor sorteado pela ``gkeepapi`` cai em qualquer altura da conta — a
+    ficha do dia pode nascer no meio das listas de mercado, e uma nota alheia
+    pode cair entre o treino A e o B. Subir o bloco inteiro resolve os dois de
+    uma vez, e é o que o próprio Keep faz com qualquer nota recém-criada.
+
+    Quando o bloco já está lá em cima, ele fica exatamente onde está: só assim
+    a sincronização seguinte não tem nada a reescrever.
+    """
+    ours = {node.id for node in nodes}
+    highest = max(
+        (node.sort for node in account if node.id not in ours and _in_the_list(node)),
+        default=0,
+    )
+    top = max(node.sort for node in nodes)
+    lowest = top - (len(nodes) - 1) * SORT_STEP
+    return top if lowest > highest else highest + len(nodes) * SORT_STEP
+
+
+def _in_the_list(node: Any) -> bool:
+    """Nota arquivada ou na lixeira não disputa espaço na tela."""
+    return not node.archived and not node.trashed
 
 
 def _rewrite_items(node: KeepList, title: str, wanted: list[str]) -> None:

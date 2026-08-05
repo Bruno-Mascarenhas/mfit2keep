@@ -106,6 +106,45 @@
       <!-- Passo 4 -->
       <section class="passo" id="passo-sync">
         <h2><span class="numero">4</span> Criar as notas</h2>
+
+        <div class="opcoes">
+          <div class="opcao">
+            <!-- O "?" fica FORA do <label>: dentro dele, tocar na dica seria
+                 redirecionado para o <select> e a bolha nunca abriria. -->
+            <div class="rotulo">
+              <label for="styles">Emoji no título</label>
+              <span class="dica" tabindex="0" aria-describedby="dica-styles">?</span>
+              <span class="bolha" id="dica-styles" role="tooltip">
+                No relógio, o título é quase tudo que se vê. Com um emoji por grupo muscular você
+                acha o treino do dia sem precisar ler nota por nota.
+              </span>
+            </div>
+            <select id="styles" aria-describedby="dica-styles">
+              <option value="classico">Clássico — 🏋️ sempre</option>
+              <option value="musculos">Por músculo — 💪 🦍 🦵 🐦 🙌</option>
+              <option value="clean">Limpo — sem emoji</option>
+            </select>
+            <p class="exemplo" id="exemplo-styles"></p>
+          </div>
+
+          <div class="opcao">
+            <div class="rotulo">
+              <label for="reps">Repetições</label>
+              <span class="dica" tabindex="0" aria-describedby="dica-reps">?</span>
+              <span class="bolha" id="dica-reps" role="tooltip">
+                O professor costuma prescrever faixa (3 a 4x de 12 a 15). No meio da série você
+                quer um número só — escolha qual ponta da faixa vale para você.
+              </span>
+            </div>
+            <select id="reps" aria-describedby="dica-reps">
+              <option value="mfit">Como veio do MFIT</option>
+              <option value="min">Sempre o mínimo</option>
+              <option value="max">Sempre o máximo</option>
+            </select>
+            <p class="exemplo" id="exemplo-reps"></p>
+          </div>
+        </div>
+
         <div class="acoes">
           <button id="buscar">Buscar meus treinos</button>
           <select id="rotina" hidden></select>

@@ -1,6 +1,6 @@
 [project]
 name = "mfit2keep"
-version = "1.0.0"
+version = "1.1.0"
 description = "Exporta treinos do MFIT Personal para notas com checkbox no Google Keep, para seguir a série pelo smartwatch — com fonte e destino plugáveis"
 authors = [{ name = "Bruno Mascarenhas", email = "brunomasck@gmail.com" }]
 readme = "README.md"
