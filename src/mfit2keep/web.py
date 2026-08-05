@@ -20,6 +20,7 @@ import secrets
 import threading
 import webbrowser
 from collections.abc import Callable
+from enum import StrEnum
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,7 +32,7 @@ from mfit2keep.destinations.base import NoteDestination, NoteResult
 from mfit2keep.destinations.local import LocalMarkdownDestination
 from mfit2keep.errors import EXPECTED_ERRORS, expected_from
 from mfit2keep.keep_auth import KeepAuthError
-from mfit2keep.render import routine_to_notes
+from mfit2keep.render import RenderOptions, RepsMode, TitleStyle, routine_to_notes
 from mfit2keep.secure_io import write_secret
 from mfit2keep.sources.mfit import MfitSource
 
@@ -191,11 +192,34 @@ def list_routines(_payload: dict[str, Any]) -> dict[str, Any]:
     return {"rotinas": asyncio.run(run())}
 
 
+def _escolha[T: StrEnum](payload: dict[str, Any], chave: str, opcoes: type[T], padrao: T) -> T:
+    """Uma opção da tela, recusando o que não está no menu.
+
+    O valor vem de um ``<select>`` nosso, mas a rota é HTTP: aceitar qualquer
+    texto faria a nota sair num formato que ninguém escolheu.
+    """
+    valor = str(payload.get(chave) or padrao.value)
+    try:
+        return opcoes(valor)
+    except ValueError:
+        disponiveis = ", ".join(opcao.value for opcao in opcoes)
+        raise ConfigError(f"Opção '{valor}' não existe em {chave} (use: {disponiveis}).") from None
+
+
+def _render_options(payload: dict[str, Any]) -> RenderOptions:
+    """As duas escolhas do passo 4: o emoji do título e a faixa de repetições."""
+    return RenderOptions(
+        style=_escolha(payload, "styles", TitleStyle, TitleStyle.CLASSICO),
+        reps=_escolha(payload, "reps", RepsMode, RepsMode.MFIT),
+    )
+
+
 def run_sync(payload: dict[str, Any]) -> dict[str, Any]:
     rotina = str(payload.get("routine_id") or "").strip()
     if not rotina:
         raise ConfigError("Escolha uma rotina.")
     destino = str(payload.get("destino") or "keep")
+    opcoes = _render_options(payload)
 
     estado = read_state()
     _exigir("Preencha o passo 1 (e-mail e senha do MFIT) e clique em Salvar.", estado, "tem_senha")
@@ -209,7 +233,7 @@ def run_sync(payload: dict[str, Any]) -> dict[str, Any]:
     async def run() -> list[NoteResult]:
         async with MfitSource(load_settings()) as source:
             treinos = await source.fetch_workouts(rotina)
-        notas = routine_to_notes(treinos)
+        notas = routine_to_notes(treinos, opcoes)
         async with _destination(destino) as saida:
             return await saida.upsert_all(notas)
 

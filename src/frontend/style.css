@@ -145,6 +145,92 @@ select {
   margin-top: 1.1rem;
 }
 
+/* Como as notas vão ficar: duas escolhas lado a lado, uma embaixo da outra
+   quando a janela é estreita. */
+.opcoes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.2rem 1.25rem;
+}
+
+/* A bolha da dica é ancorada aqui, e não no "?": presa à coluna, ela nunca
+   vaza para fora do cartão — nem na coluna da direita, nem no celular. */
+.opcao {
+  position: relative;
+}
+
+.rotulo {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.rotulo label {
+  margin-bottom: 0.3rem;
+}
+
+.opcao select {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Dica em bolha, e não o `title` nativo: aquele demora a aparecer, não abre
+   com teclado e some de vez no toque. */
+.dica {
+  display: inline-grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border: 1px solid var(--borda);
+  border-radius: 50%;
+  color: var(--suave);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: help;
+  user-select: none;
+}
+
+/* O texto mora num elemento de verdade, e não em `content: attr()`: assim o
+   leitor de tela o alcança pelo `aria-describedby` do seletor. Ele some com
+   `opacity`, e não com `display`, justamente para continuar no acessível. */
+.bolha {
+  position: absolute;
+  top: 2.4rem;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--cartao);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+  color: var(--texto);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.dica:hover ~ .bolha,
+.dica:focus ~ .bolha,
+.dica:focus-visible ~ .bolha {
+  opacity: 1;
+}
+
+/* A linha como ela vai chegar no relógio — muda junto com o seletor. */
+.exemplo {
+  margin: 0.45rem 0 0.2rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px dashed var(--borda);
+  border-radius: 8px;
+  background: var(--fundo);
+  color: var(--suave);
+  font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
 button {
   padding: 0.6rem 1.1rem;
   border: 1px solid var(--borda);
