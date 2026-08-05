@@ -127,6 +127,24 @@ def _column(series_rows: list[SeriesRow], column: int) -> str | None:
     return " / ".join(value or "—" for value in values)
 
 
+def _muscle_group(raw_exercise: dict[str, Any]) -> str | None:
+    """Grupo muscular do exercício, como o MFIT o classifica.
+
+    ``exerciseGroup`` é a resposta boa ("Peitoral", "Dorsal", "Aeróbio"), mas
+    às vezes ele descreve o material ("Elásticos e Faixas"). Quando ele falta,
+    a categoria ainda salva o caso que mais importa: o aeróbio, cujo campo de
+    repetições traz minutos.
+    """
+    raw_group = raw_exercise.get("exerciseGroup")
+    if isinstance(raw_group, dict) and (name := _clean(raw_group.get("nome"))):
+        return name
+
+    raw_category = raw_exercise.get("exerciseCategory")
+    if isinstance(raw_category, dict) and _clean(raw_category.get("name")) == "aerobic":
+        return "Aeróbio"
+    return None
+
+
 def parse_exercise(raw_exercise: dict[str, Any], *, combined_group: str | None = None) -> Exercise:
     all_series: list[dict[str, Any]] = raw_exercise.get("series") or []
     series_rows: list[SeriesRow] = [
@@ -143,6 +161,7 @@ def parse_exercise(raw_exercise: dict[str, Any], *, combined_group: str | None =
         rest=_column(series_rows, REST_COLUMN),
         notes=_join([_clean(series.get("obs")) for series in all_series], " · "),
         group=combined_group,
+        muscle_group=_muscle_group(raw_exercise),
     )
 
 

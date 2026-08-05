@@ -20,6 +20,10 @@ class Exercise:
     notes: str | None = None
     #: Exercícios da mesma série combinada (bi-set, tri-set) compartilham a chave.
     group: str | None = None
+    #: Grupo muscular declarado pela fonte ("Peitoral", "Dorsal", "Aeróbio").
+    #: É o que dá o emoji do título e revela o exercício aeróbio, cujas
+    #: "repetições" são minutos.
+    muscle_group: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
