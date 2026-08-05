@@ -57,6 +57,9 @@ class OfflineKeep:
         for node in self.all():
             if node.server_id is None:
                 node.server_id = f"srv-{node.id[:8]}"
+            # Subir limpa o `dirty`, como na biblioteca de verdade — é o que
+            # deixa um teste ver se a execução seguinte escreveu algo.
+            _limpar(node)
 
     def dump(self) -> dict[str, Any]:
         return {}
@@ -69,6 +72,13 @@ class OfflineKeep:
 
     def all(self) -> Any:
         return self._keep.all()
+
+
+def _limpar(node: Any) -> None:
+    """Marca a nota e os itens dela como subidos."""
+    node.save(clean=True)
+    for filho in node.children:
+        _limpar(filho)
 
 
 @pytest.fixture(autouse=True)
@@ -251,6 +261,130 @@ async def test_batch_syncs_once(credentials: KeepCredentials) -> None:
 
     # Uma subida para o lote inteiro — cinco notas não podem virar cinco syncs.
     assert client.sync_count == 1
+
+
+def routine(days: str = "ABCDE") -> list[ChecklistNote]:
+    """Uma rotina inteira, na ordem dos dias."""
+    return [
+        ChecklistNote(
+            title=f"💪 {letter} — Dia {letter}",
+            items=[ChecklistItem(text="1. Supino")],
+            external_id=f"mfit:{letter}",
+        )
+        for letter in days
+    ]
+
+
+def on_screen(client: OfflineKeep) -> list[str]:
+    """Os títulos como o Keep os mostra: maior ``sortValue`` em cima."""
+    alive = [node for node in client.all() if not node.trashed and not node.archived]
+    return [node.title for node in sorted(alive, key=lambda node: node.sort, reverse=True)]
+
+
+async def test_notes_come_out_in_the_order_of_the_days(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+
+    await KeepDestination(credentials, client=client).upsert_all(routine())
+
+    # Sem `sort` explícito, a gkeepapi sorteia o valor de cada nota nova e os
+    # cinco dias saem embaralhados no celular e no relógio.
+    assert on_screen(client) == [note.title for note in routine()]
+
+
+async def test_the_order_survives_a_resync(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all(routine())
+
+    results = await destination.upsert_all(routine())
+
+    assert on_screen(client) == [note.title for note in routine()]
+    # Bloco já posicionado não pode virar cinco uploads a cada execução.
+    assert [r.action for r in results] == [Action.UNCHANGED] * 5
+
+
+async def test_a_settled_block_keeps_the_same_sort_values(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all(routine())
+    before = {node.id: node.sort for node in client.all()}
+
+    await destination.upsert_all(routine())
+
+    assert {node.id: node.sort for node in client.all()} == before
+
+
+async def test_a_settled_block_is_not_marked_for_upload(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all(routine())
+
+    await destination.upsert_all(routine())
+
+    # Escrever o mesmo `sort` de novo suja a nota e a manda para o Keep sem
+    # motivo: o valor final seria igual, e só o `dirty` denuncia a regressão.
+    assert [node.dirty for node in client.all()] == [False] * 5
+
+
+async def test_a_note_that_only_moved_is_reported_as_updated(
+    credentials: KeepCredentials,
+) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all(routine())
+
+    # O usuário troca B e D de lugar no celular, sem mexer no topo do bloco.
+    por_titulo = {node.title: node for node in client.all()}
+    b, d = por_titulo["💪 B — Dia B"], por_titulo["💪 D — Dia D"]
+    b.sort, d.sort = d.sort, b.sort
+
+    results = await destination.upsert_all(routine())
+
+    # O conteúdo das duas não mudou, mas elas subiram para o Keep — dizer "sem
+    # mudança" ali seria mentir sobre o que a execução fez. As outras três
+    # ficaram onde estavam e continuam intocadas.
+    acoes = {r.note_title: r.action for r in results}
+    assert acoes["💪 B — Dia B"] is acoes["💪 D — Dia D"] is Action.UPDATED
+    assert acoes["💪 A — Dia A"] is acoes["💪 C — Dia C"] is Action.UNCHANGED
+    assert on_screen(client) == [note.title for note in routine()]
+
+
+async def test_the_routine_sits_above_the_other_notes(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    # Nota do usuário no topo da conta, acima de qualquer valor sorteado.
+    minha = client.createList("Lista de compras", [("Café", False)])
+    minha.sort = 99_000_000_000
+
+    await KeepDestination(credentials, client=client).upsert_all(routine())
+
+    assert on_screen(client)[:5] == [note.title for note in routine()]
+    # Nenhuma nota alheia pode cair no meio dos dias.
+    assert on_screen(client)[5] == "Lista de compras"
+
+
+async def test_a_new_day_enters_in_its_place(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all(routine("ACE"))
+
+    # O professor acrescenta dois dias no meio da rotina.
+    await destination.upsert_all(routine("ABCDE"))
+
+    assert on_screen(client) == [note.title for note in routine("ABCDE")]
+
+
+async def test_a_shuffled_block_is_put_back_in_order(credentials: KeepCredentials) -> None:
+    client = OfflineKeep()
+    destination = KeepDestination(credentials, client=client)
+    await destination.upsert_all(routine())
+
+    # O usuário arrasta as notas no celular e embaralha a rotina.
+    for position, node in enumerate(client.all()):
+        node.sort = 1_000 + position * 7
+
+    await destination.upsert_all(routine())
+
+    assert on_screen(client) == [note.title for note in routine()]
 
 
 async def test_authentication_uses_the_stored_device_id(credentials: KeepCredentials) -> None:
