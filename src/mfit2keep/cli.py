@@ -27,7 +27,7 @@ from mfit2keep.destinations.local import LocalMarkdownDestination
 from mfit2keep.errors import EXPECTED_ERRORS, expected_from
 from mfit2keep.interchange import workouts_to_dict
 from mfit2keep.models import Workout
-from mfit2keep.render import RenderOptions, routine_to_notes
+from mfit2keep.render import RenderOptions, RepsMode, TitleStyle, routine_to_notes
 from mfit2keep.sources.base import RoutineSummary, WorkoutSource
 from mfit2keep.sources.mfit import MfitSource
 from mfit2keep.sources.workout_file import WorkoutFileSource
@@ -58,6 +58,21 @@ Numbered = Annotated[bool, typer.Option("--numerar/--sem-numerar")]
 Rest = Annotated[bool, typer.Option("--intervalo/--sem-intervalo")]
 Load = Annotated[bool, typer.Option("--carga/--sem-carga")]
 Width = Annotated[int, typer.Option("--largura", help="Corta a linha; 0 = sem corte.")]
+Styles = Annotated[
+    TitleStyle,
+    typer.Option(
+        "--styles",
+        "--estilo",
+        help="Emoji do título: o mesmo sempre, um por grupo muscular, ou nenhum.",
+    ),
+]
+Reps = Annotated[
+    RepsMode,
+    typer.Option(
+        "--reps",
+        help='Faixa de repetições ("3 a 4x de 12 a 15"): como veio, o piso ou o teto.',
+    ),
+]
 DestinationOpt = Annotated[Destino, typer.Option("--destino", "-d")]
 SourceOpt = Annotated[Fonte, typer.Option("--fonte", "-f", help="De onde vêm os treinos.")]
 SourceFile = Annotated[
@@ -91,9 +106,21 @@ def _print_results(results: list[NoteResult]) -> None:
     console.print(table)
 
 
-def _options(numbered: bool, rest: bool, load: bool, width: int) -> RenderOptions:
+def _options(
+    numbered: bool,
+    rest: bool,
+    load: bool,
+    width: int,
+    styles: TitleStyle = TitleStyle.CLASSICO,
+    reps: RepsMode = RepsMode.MFIT,
+) -> RenderOptions:
     return RenderOptions(
-        numbered=numbered, include_rest=rest, include_load=load, max_line_length=width
+        numbered=numbered,
+        include_rest=rest,
+        include_load=load,
+        max_line_length=width,
+        style=styles,
+        reps=reps,
     )
 
 
@@ -137,6 +164,8 @@ def preview(
     rest: Rest = True,
     load: Load = True,
     width: Width = 0,
+    styles: Styles = TitleStyle.CLASSICO,
+    reps: Reps = RepsMode.MFIT,
 ) -> None:
     """Mostra no terminal exatamente o que iria para as notas."""
 
@@ -144,7 +173,8 @@ def preview(
         async with _source(fonte, workout_file) as source:
             return await source.fetch_workouts(routine_id)
 
-    for note in routine_to_notes(_run(run()), _options(numbered, rest, load, width)):
+    options = _options(numbered, rest, load, width, styles, reps)
+    for note in routine_to_notes(_run(run()), options):
         console.print(f"\n[bold cyan]{note.title}[/]")
         for item in note.items:
             console.print(f"  [dim]☐[/] {item.text}")
@@ -161,13 +191,15 @@ def sync_command(
     rest: Rest = True,
     load: Load = True,
     width: Width = 0,
+    styles: Styles = TitleStyle.CLASSICO,
+    reps: Reps = RepsMode.MFIT,
 ) -> None:
     """Gera as notas com checkboxes a partir de uma rotina."""
 
     async def run() -> list[NoteResult]:
         async with _source(fonte, workout_file) as source:
             workouts = await source.fetch_workouts(routine_id)
-        notes = routine_to_notes(workouts, _options(numbered, rest, load, width))
+        notes = routine_to_notes(workouts, _options(numbered, rest, load, width, styles, reps))
         async with _destination(destino, out_dir) as destination:
             return await destination.upsert_all(notes)
 
