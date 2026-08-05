@@ -8,7 +8,7 @@
 [![CI](https://github.com/Bruno-Mascarenhas/mfit2keep/actions/workflows/ci.yml/badge.svg)](https://github.com/Bruno-Mascarenhas/mfit2keep/actions/workflows/ci.yml)
 [![Linux | Windows | macOS](https://img.shields.io/badge/os-linux%20%7C%20windows%20%7C%20macos-informational)](#instalação)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-357%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-358%20passing-brightgreen)](tests/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 </div>

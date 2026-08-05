@@ -255,6 +255,16 @@ def test_cardio_reps_are_always_minutes(prescribed: str, expected: dict[str, str
     assert {mode.value: watch_reps(esteira, mode) for mode in RepsMode} == expected
 
 
+def test_cardio_prescribed_in_sets_still_picks_the_end_of_the_range() -> None:
+    # Circuito catalogado como aeróbio: a unidade não é minuto, mas a faixa
+    # continua sendo faixa — a escolha de --reps não pode sumir aqui.
+    corda = Exercise(name="Corda Naval", reps="3 a 4x de 12 a 15", muscle_group="Aeróbio")
+
+    assert watch_reps(corda, RepsMode.MIN) == "3x12"
+    assert watch_reps(corda, RepsMode.MAX) == "4x15"
+    assert watch_reps(corda, RepsMode.MFIT) == "3 a 4x de 12 a 15"
+
+
 def test_only_cardio_gets_minutes() -> None:
     # "15" num exercício de força é repetição, não tempo.
     assert watch_reps(Exercise(name="Abdominal Supra", reps="15"), RepsMode.MIN) == "15"

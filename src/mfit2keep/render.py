@@ -111,9 +111,13 @@ def watch_reps(exercise: Exercise, mode: RepsMode = RepsMode.MFIT) -> str | None
     if not exercise.reps:
         return exercise.reps
 
-    if is_cardio(exercise):
-        return _as_minutes(exercise.reps, mode)
-    return _pick_of_range(exercise.reps, mode)
+    # Aeróbio e faixa não são caminhos exclusivos: o circuito que o professor
+    # catalogou como aeróbio (corda naval, burpee) ainda vem em séries, e ali a
+    # ponta escolhida vale como em qualquer outro exercício. Escolher a ponta
+    # antes é seguro porque os dois padrões são disjuntos — o de séries exige o
+    # "x", o de duração exige o número sozinho —, então o " min" nunca se perde.
+    picked = _pick_of_range(exercise.reps, mode)
+    return _as_minutes(picked, mode) if is_cardio(exercise) else picked
 
 
 def _pick_of_range(reps: str, mode: RepsMode) -> str:

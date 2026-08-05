@@ -8,7 +8,7 @@ quando alguém vai mexer no código.**
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![mypy strict](https://img.shields.io/badge/mypy-strict-2A6DB2)](https://mypy-lang.org/)
 [![uv](https://img.shields.io/badge/deps-uv-DE5FE9?logo=uv&logoColor=white)](https://docs.astral.sh/uv/)
-[![Tests](https://img.shields.io/badge/tests-357%20passing-brightgreen)](../tests/)
+[![Tests](https://img.shields.io/badge/tests-358%20passing-brightgreen)](../tests/)
 
 [Instalar e usar](../README.md) · [Arquitetura](#arquitetura) · [Segurança](#segredos-tirando-a-senha-do-texto-puro)
 
@@ -334,7 +334,7 @@ vira o `muscle_group` do modelo.
 ## Desenvolvimento
 
 ```bash
-pytest                            # 357 testes
+pytest                            # 358 testes
 ruff check src tests
 ruff format src tests
 mypy --platform linux             # o código tem caminho por sistema:
