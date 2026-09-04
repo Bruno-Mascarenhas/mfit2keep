@@ -12,6 +12,7 @@ from typing import Any
 
 import gkeepapi
 import pytest
+from gkeepapi.exception import ResyncRequiredException
 
 from mfit2keep import secure_io
 from mfit2keep.destinations import keep as keep_module
@@ -396,6 +397,55 @@ async def test_authentication_uses_the_stored_device_id(credentials: KeepCredent
     await destination.upsert_all([note("1. Supino")])
 
     assert client.authenticated_with == ("eu@gmail.com", "aas_et/abc", "dead")
+
+
+class StaleStateKeep(OfflineKeep):
+    """Recusa o cache em disco, como o Keep faz quando a versão dele envelhece."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.resync_requested = False
+
+    def authenticate(
+        self,
+        email: str,
+        master_token: str,
+        state: dict[str, Any] | None = None,
+        sync: bool = True,
+        device_id: str | None = None,
+    ) -> None:
+        if state is not None:
+            raise ResyncRequiredException("Full resync required")
+        super().authenticate(email, master_token, state, sync, device_id)
+
+    def sync(self, resync: bool = False) -> None:
+        self.resync_requested = self.resync_requested or resync
+        super().sync(resync)
+
+
+def stale_state_cache() -> StaleStateKeep:
+    keep_module.STATE_CACHE.write_text('{"keep_version": "1"}', encoding="utf-8")
+    return StaleStateKeep()
+
+
+async def test_a_stale_state_cache_still_writes_the_note(credentials: KeepCredentials) -> None:
+    client = stale_state_cache()
+    destination = KeepDestination(credentials)
+    destination._client = client
+
+    [result] = await destination.upsert_all([note("1. Supino")])
+
+    assert result.action is Action.CREATED
+
+
+async def test_a_stale_state_cache_asks_for_a_full_resync(credentials: KeepCredentials) -> None:
+    client = stale_state_cache()
+    destination = KeepDestination(credentials)
+    destination._client = client
+
+    await destination.upsert_all([note("1. Supino")])
+
+    assert client.resync_requested
 
 
 async def test_created_note_carries_the_marker_label(credentials: KeepCredentials) -> None:
