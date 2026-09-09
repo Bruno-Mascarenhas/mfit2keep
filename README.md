@@ -87,10 +87,15 @@ Depois:
 git clone https://github.com/Bruno-Mascarenhas/mfit2keep.git
 cd mfit2keep
 
-uv venv --python 3.14
+uv sync --locked
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
-uv pip install -e ".[dev]"
 ```
+
+O `uv sync` cria o `.venv`, instala o projeto e as ferramentas de desenvolvimento, tudo nas
+versões exatas do `uv.lock` — as mesmas que o CI usa. O `--locked` recusa um lock que não bata
+com o `pyproject.toml`, e o lock fixa também a versão do próprio projeto: depois de mexer em
+dependência **ou de subir a versão**, rode `uv lock` e versione o `uv.lock` junto, senão o CI
+falha logo no passo de instalação.
 
 > [!NOTE]
 > O `activate` não é opcional: sem ele o comando `mfit2keep` não fica disponível.
@@ -102,9 +107,13 @@ uv pip install -e ".[dev]"
 
 ```bash
 conda create -y -n mfit2keep python=3.14
-uv pip install --python "$(conda run -n mfit2keep which python)" -e ".[dev]"
 conda activate mfit2keep
+UV_PROJECT_ENVIRONMENT="$CONDA_PREFIX" uv sync --locked --inexact
 ```
+
+Nas operações de projeto o `uv` só enxerga `VIRTUAL_ENV`, e o `conda activate` não define essa
+variável — sem o `UV_PROJECT_ENVIRONMENT` ele criaria um `.venv` à parte e deixaria o ambiente do
+conda vazio, sem avisar. O `--inexact` preserva o que o conda já instalou ali, o `pip` inclusive.
 
 </details>
 

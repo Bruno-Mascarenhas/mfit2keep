@@ -37,7 +37,7 @@ jobs:
       # `--locked` recusa um uv.lock que não bata com o pyproject: o CI roda
       # contra a resolução exata que está versionada, não uma resolvida na hora.
       - name: Instalar dependências
-        run: uv sync --locked --extra dev
+        run: uv sync --locked
 
       - name: Lint (ruff)
         run: uv run ruff check src tests

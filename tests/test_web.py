@@ -48,7 +48,9 @@ def pedir(
         with urllib.request.urlopen(requisicao, timeout=10) as resposta:
             return resposta.status, json.loads(resposta.read())
     except urllib.error.HTTPError as erro:
-        return erro.code, json.loads(erro.read())
+        # O HTTPError também é a resposta, com o socket aberto dentro.
+        with erro:
+            return erro.code, json.loads(erro.read())
 
 
 def test_serves_the_page_without_a_token(painel: tuple[str, str]) -> None:
