@@ -1,8 +1,10 @@
 version: 2
 
 updates:
-  # Dependências Python declaradas no pyproject.toml.
-  - package-ecosystem: pip
+  # Dependências Python. O ecossistema é `uv`, não `pip`: só ele regenera o
+  # uv.lock junto com o pyproject, e o `uv sync --locked` do CI recusa um lock
+  # que ficou para trás do pyproject.
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: monthly

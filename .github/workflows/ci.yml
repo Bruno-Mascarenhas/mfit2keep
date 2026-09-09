@@ -26,19 +26,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Versão exata: o setup-uv não publica tag móvel `v9`, só `v9.0.0`.
+      # Versão exata: o setup-uv não publica tag móvel `v10`, só `v10.0.1`.
       # O Dependabot cuida de subir isso mensalmente.
       - name: Instalar uv e Python 3.14
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.14"
           enable-cache: true
 
-      - name: Criar o ambiente
-        run: uv venv --python 3.14
-
+      # `--locked` recusa um uv.lock que não bata com o pyproject: o CI roda
+      # contra a resolução exata que está versionada, não uma resolvida na hora.
       - name: Instalar dependências
-        run: uv pip install -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Lint (ruff)
         run: uv run ruff check src tests
