@@ -400,11 +400,18 @@ async def test_authentication_uses_the_stored_device_id(credentials: KeepCredent
 
 
 class StaleStateKeep(OfflineKeep):
-    """Recusa o cache em disco, como o Keep faz quando a versão dele envelhece."""
+    """Recusa o cache em disco, como o Keep faz quando a versão dele envelhece.
+
+    A recusa nasce do estado da instância, não do argumento recebido: o
+    ``gkeepapi`` guarda a versão do cache ao restaurá-lo e só o
+    ``sync(resync=True)`` a zera. Autenticar de novo sem ``state`` pula a
+    restauração, mas deixa a versão velha viva — e o erro se repete.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.resync_requested = False
+        self._refused_version: str | None = None
 
     def authenticate(
         self,
@@ -414,12 +421,18 @@ class StaleStateKeep(OfflineKeep):
         sync: bool = True,
         device_id: str | None = None,
     ) -> None:
-        if state is not None:
-            raise ResyncRequiredException("Full resync required")
         super().authenticate(email, master_token, state, sync, device_id)
+        if state is not None:
+            self._refused_version = state["keep_version"]
+        if sync:
+            self.sync()
 
     def sync(self, resync: bool = False) -> None:
         self.resync_requested = self.resync_requested or resync
+        if resync:
+            self._refused_version = None
+        if self._refused_version is not None:
+            raise ResyncRequiredException("Full resync required")
         super().sync(resync)
 
 
