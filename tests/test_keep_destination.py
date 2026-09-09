@@ -461,6 +461,18 @@ async def test_a_stale_state_cache_asks_for_a_full_resync(credentials: KeepCrede
     assert client.resync_requested
 
 
+async def test_a_stale_state_cache_is_replaced_after_the_resync(
+    credentials: KeepCredentials,
+) -> None:
+    client = stale_state_cache()
+    destination = KeepDestination(credentials)
+    destination._client = client
+
+    await destination.upsert_all([note("1. Supino")])
+
+    assert secure_io.read_secret_json(keep_module.STATE_CACHE) == client.dump()
+
+
 async def test_created_note_carries_the_marker_label(credentials: KeepCredentials) -> None:
     client = OfflineKeep()
 
