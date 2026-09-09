@@ -37,13 +37,13 @@ classifiers = [
 
 dependencies = [
     "httpx>=0.28.1",
-    "python-dotenv>=1.1.0",
-    "typer>=0.16.0",
-    "rich>=14.0.0",
+    "python-dotenv>=1.2.3",
+    "typer>=0.27.2",
+    "rich>=15.0.0",
     # Google Keep: a API oficial é Workspace-only, conta pessoal só via gkeepapi.
     "gkeepapi>=0.17.1",
     "gpsoauth>=2.0.0",
-    "keyring>=25.0.0",
+    "keyring>=25.7.0",
 ]
 
 [project.urls]
@@ -53,11 +53,11 @@ Issues = "https://github.com/Bruno-Mascarenhas/mfit2keep/issues"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.3.0",
-    "pytest-asyncio>=1.0.0",
-    "respx>=0.22.0",
-    "ruff>=0.14.0",
-    "mypy>=1.18.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "respx>=0.23.1",
+    "ruff>=0.16.6",
+    "mypy>=2.3.1",
 ]
 
 [project.scripts]
