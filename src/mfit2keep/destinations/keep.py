@@ -24,6 +24,7 @@ from collections.abc import Callable, Iterable
 from typing import Any, Protocol
 
 import gkeepapi
+from gkeepapi.exception import ResyncRequiredException
 from gkeepapi.node import List as KeepList
 
 from mfit2keep.config import STATE_DIR
@@ -97,13 +98,21 @@ class KeepDestination(NoteDestination):
 
     def _authenticate(self) -> None:
         assert self._client is not None
-        # O estado em cache evita rebaixar a conta inteira a cada execução.
-        self._client.authenticate(
-            self._credentials.email,
-            self._credentials.master_token,
-            state=read_secret_json(STATE_CACHE),
-            device_id=self._credentials.device_id,
-        )
+        try:
+            # O estado em cache evita rebaixar a conta inteira a cada execução.
+            self._client.authenticate(
+                self._credentials.email,
+                self._credentials.master_token,
+                state=read_secret_json(STATE_CACHE),
+                device_id=self._credentials.device_id,
+            )
+        except ResyncRequiredException:
+            # O cache envelheceu e o Keep recusa o delta a partir dele. Repetir o
+            # `authenticate` sem `state` não adianta: sem `state` ele nem chama o
+            # `restore`, e a versão velha continua na instância. Só o `resync`
+            # zera essa versão. Ele descarta alterações locais, mas aqui ainda
+            # não existe nenhuma — nada foi escrito antes de autenticar.
+            self._client.sync(resync=True)
 
     # ---------------------------------------------------------------- upsert
 
