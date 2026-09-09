@@ -51,7 +51,11 @@ Homepage = "https://github.com/Bruno-Mascarenhas/mfit2keep"
 Repository = "https://github.com/Bruno-Mascarenhas/mfit2keep"
 Issues = "https://github.com/Bruno-Mascarenhas/mfit2keep/issues"
 
-[project.optional-dependencies]
+# Grupo, não extra: como `[project.optional-dependencies]`, o toolchain entrava
+# na metadata do wheel e `pip install mfit2keep[dev]` arrastaria mypy, ruff e
+# pytest para quem só quer sincronizar treino. O `uv sync` instala o grupo `dev`
+# por padrão, então o CI não precisa pedir.
+[dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
