@@ -34,11 +34,10 @@ jobs:
           python-version: "3.14"
           enable-cache: true
 
-      - name: Criar o ambiente
-        run: uv venv --python 3.14
-
+      # `--locked` recusa um uv.lock que não bata com o pyproject: o CI roda
+      # contra a resolução exata que está versionada, não uma resolvida na hora.
       - name: Instalar dependências
-        run: uv pip install -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Lint (ruff)
         run: uv run ruff check src tests
