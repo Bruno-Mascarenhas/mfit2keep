@@ -87,10 +87,14 @@ Depois:
 git clone https://github.com/Bruno-Mascarenhas/mfit2keep.git
 cd mfit2keep
 
-uv venv --python 3.14
+uv sync --locked
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
-uv pip install -e ".[dev]"
 ```
+
+O `uv sync` cria o `.venv`, instala o projeto e as ferramentas de desenvolvimento, tudo nas
+versões exatas do `uv.lock` — as mesmas que o CI usa. O `--locked` recusa um lock que não bata
+com o `pyproject.toml`: se você mexer nas dependências, rode `uv lock` e versione o `uv.lock`
+junto, senão o CI falha logo no passo de instalação.
 
 > [!NOTE]
 > O `activate` não é opcional: sem ele o comando `mfit2keep` não fica disponível.
@@ -102,9 +106,11 @@ uv pip install -e ".[dev]"
 
 ```bash
 conda create -y -n mfit2keep python=3.14
-uv pip install --python "$(conda run -n mfit2keep which python)" -e ".[dev]"
 conda activate mfit2keep
+uv sync --locked --active
 ```
+
+O `--active` manda o `uv` instalar no ambiente que está ativo em vez de criar um `.venv` à parte.
 
 </details>
 
