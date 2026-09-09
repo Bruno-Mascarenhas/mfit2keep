@@ -90,7 +90,7 @@ src = ["src", "tests"]
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF", "TID"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "SLF", "RUF", "TID"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 # Import relativo quebra `python src/mfit2keep/cli.py`; só absoluto entra.
